@@ -204,7 +204,7 @@ export async function runInitWizard(
   } else {
     const vaultName = await prompter.text({
       message: '1Password vault name',
-      placeholder: stored.data.opVaultName ?? 'PwrDrvr LLC',
+      placeholder: stored.data.opVaultName ?? 'Private',
       validate: (value) => (value.trim().length > 0 ? undefined : 'Enter the 1Password vault name'),
     });
     if (isCancel(vaultName)) {

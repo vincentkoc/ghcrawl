@@ -9,7 +9,6 @@
   "packageManager": "pnpm@10.29.3",
   "scripts": {
     "cli": "pnpm --filter @gitcrawl/cli cli",
-    "init": "pnpm --filter @gitcrawl/cli cli init",
     "bootstrap": "pnpm --filter @gitcrawl/cli cli init",
     "doctor": "pnpm --filter @gitcrawl/cli cli doctor",
     "health": "pnpm --filter @gitcrawl/cli cli doctor",

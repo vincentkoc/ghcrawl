@@ -38,6 +38,8 @@ This opens the setup wizard the first time. You can either:
 - store both keys in plaintext in `~/.config/gitcrawl/config.json`
 - or keep them in 1Password CLI (`op`) and let init print a wrapper example for your shell
 
+Use `pnpm bootstrap` for setup. Plain `pnpm init` runs pnpm’s own initializer, not gitcrawl.
+
 Recommended GitHub token shape:
 
 - fine-grained PAT
@@ -70,8 +72,8 @@ Then use the wrapper init shows you, or run a command like this:
 
 ```bash
 env \
-  GITHUB_TOKEN="$(op read 'op://PwrDrvr LLC/gitcrawl/GITHUB_TOKEN')" \
-  OPENAI_API_KEY="$(op read 'op://PwrDrvr LLC/gitcrawl/OPENAI_API_KEY')" \
+  GITHUB_TOKEN="$(op read 'op://Private/gitcrawl/GITHUB_TOKEN')" \
+  OPENAI_API_KEY="$(op read 'op://Private/gitcrawl/OPENAI_API_KEY')" \
   pnpm health
 ```
 

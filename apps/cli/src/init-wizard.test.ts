@@ -105,7 +105,7 @@ test('runInitWizard can configure 1Password CLI metadata without persisting plai
     env,
     prompter: makePrompter({
       select: async () => 'op',
-      text: async ({ message }) => (message.includes('vault') ? 'PwrDrvr LLC' : 'gitcrawl'),
+      text: async ({ message }) => (message.includes('vault') ? 'Private' : 'gitcrawl'),
       note: async (message, title) => {
         notes.push({ title, message });
       },
@@ -116,7 +116,7 @@ test('runInitWizard can configure 1Password CLI metadata without persisting plai
   assert.equal(result.changed, true);
   const persisted = readPersistedConfig({ env });
   assert.equal(persisted.data.secretProvider, 'op');
-  assert.equal(persisted.data.opVaultName, 'PwrDrvr LLC');
+  assert.equal(persisted.data.opVaultName, 'Private');
   assert.equal(persisted.data.opItemName, 'gitcrawl');
   assert.equal(persisted.data.githubToken, undefined);
   assert.equal(persisted.data.openaiApiKey, undefined);

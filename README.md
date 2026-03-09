@@ -21,6 +21,7 @@ For a full first-run walkthrough against `openclaw/openclaw`, see [GETTING-START
 `pnpm bootstrap` runs the interactive setup wizard the first time. It can either save plaintext keys in `~/.config/gitcrawl/config.json` or guide you through a 1Password CLI (`op`) setup that keeps keys out of the config file. You do not need a repo-local `.env.local` file for normal use.
 
 Use `pnpm health` for the root-level doctor helper. `pnpm doctor` is a built-in pnpm command and does not run gitcrawl.
+Use `pnpm bootstrap` for setup. `pnpm init` is a built-in pnpm command and does not run gitcrawl init.
 
 If you configured gitcrawl for 1Password CLI, there are root helpers for that too:
 
@@ -108,7 +109,7 @@ pnpm health
   - and tells you to create a Secure Note with concealed fields named `GITHUB_TOKEN` and `OPENAI_API_KEY`
 - init also prints a ready-to-paste `~/.zshrc` wrapper function and an example `op read` command
 - re-running `pnpm bootstrap` is idempotent once both keys are already stored
-- use `pnpm bootstrap -- --reconfigure` or `gitcrawl init --reconfigure` if you want to replace stored keys
+- use `pnpm bootstrap -- --reconfigure` or `pnpm --filter @gitcrawl/cli cli init --reconfigure` if you want to replace stored keys
 - use `pnpm health` or `pnpm run doctor` from the repo root; plain `pnpm doctor` runs pnpm’s own doctor command instead
 
 GitHub token guidance:

@@ -247,15 +247,18 @@ export async function runInitWizard(
     );
     await prompter.note(
       [
-        'After saving that Secure Note, run:',
-        '- pnpm op:doctor',
-        '- pnpm op:tui',
-        '- pnpm op:shell',
+        'After saving that Secure Note, run gitcrawl through an op-backed shell helper:',
         '',
-        'Optional ~/.zshrc helper:',
         'gitcrawl-op() {',
-        '  pnpm op:exec -- "$@"',
+        `  env GITHUB_TOKEN=\"$(op read '${opReferenceBase}/GITHUB_TOKEN')\" \\`,
+        `      OPENAI_API_KEY=\"$(op read '${opReferenceBase}/OPENAI_API_KEY')\" \\`,
+        '      gitcrawl "$@"',
         '}',
+        '',
+        'Examples:',
+        '- gitcrawl-op doctor',
+        '- gitcrawl-op tui',
+        '- gitcrawl-op sync openclaw/openclaw',
       ].join('\n'),
       'Next Commands',
     );

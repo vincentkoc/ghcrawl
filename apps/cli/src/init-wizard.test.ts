@@ -129,6 +129,7 @@ test('runInitWizard can configure 1Password CLI metadata without persisting plai
     notes.some((entry) => entry.title === '1Password Setup' && entry.message.includes('op://Private/gitcrawl/GITHUB_TOKEN')),
     true,
   );
-  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('pnpm op:doctor')), true);
+  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op()')), true);
+  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op doctor')), true);
   assert.equal(confirms.some((message) => message.includes('I created the Secure Note')), true);
 });

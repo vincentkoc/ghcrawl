@@ -34,6 +34,8 @@ const migrationStatements = [
     updated_at_gh text,
     closed_at_gh text,
     merged_at_gh text,
+    first_pulled_at text,
+    last_pulled_at text,
     updated_at text not null,
     unique(repo_id, kind, number)
   )
@@ -208,5 +210,16 @@ const migrationStatements = [
 export function migrate(db: SqliteDatabase): void {
   for (const statement of migrationStatements) {
     db.exec(statement);
+  }
+
+  const threadColumns = new Set(
+    (db.prepare('pragma table_info(threads)').all() as Array<{ name: string }>).map((column) => column.name),
+  );
+
+  if (!threadColumns.has('first_pulled_at')) {
+    db.exec('alter table threads add column first_pulled_at text');
+  }
+  if (!threadColumns.has('last_pulled_at')) {
+    db.exec('alter table threads add column last_pulled_at text');
   }
 }

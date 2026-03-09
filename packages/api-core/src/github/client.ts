@@ -12,6 +12,7 @@ export type GitHubClient = {
     limit?: number,
     reporter?: GitHubReporter,
   ) => Promise<Array<Record<string, unknown>>>;
+  getIssue: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Record<string, unknown>>;
   getPull: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Record<string, unknown>>;
   listIssueComments: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Array<Record<string, unknown>>>;
   listPullReviews: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Array<Record<string, unknown>>>;
@@ -169,6 +170,12 @@ export function makeGitHubClient(options: RequestOptions): GitHubClient {
             since,
           }) as AsyncIterable<OctokitPage<Record<string, unknown>>>,
       );
+    },
+    async getIssue(owner, repo, number, reporter) {
+      return request(`GET /repos/${owner}/${repo}/issues/${number}`, reporter, async (octokit) => {
+        const response = await octokit.rest.issues.get({ owner, repo, issue_number: number });
+        return response.data as Record<string, unknown>;
+      });
     },
     async getPull(owner, repo, number, reporter) {
       return request(`GET /repos/${owner}/${repo}/pulls/${number}`, reporter, async (octokit) => {

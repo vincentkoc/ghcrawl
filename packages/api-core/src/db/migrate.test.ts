@@ -18,6 +18,11 @@ test('migrate creates core tables', () => {
     assert.ok(names.includes('documents'));
     assert.ok(names.includes('document_embeddings'));
     assert.ok(names.includes('cluster_runs'));
+
+    const threadColumns = db.prepare('pragma table_info(threads)').all() as Array<{ name: string }>;
+    const threadColumnNames = threadColumns.map((column) => column.name);
+    assert.ok(threadColumnNames.includes('first_pulled_at'));
+    assert.ok(threadColumnNames.includes('last_pulled_at'));
   } finally {
     db.close();
   }

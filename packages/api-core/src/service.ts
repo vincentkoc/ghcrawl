@@ -45,6 +45,8 @@ type ThreadRow = {
   html_url: string;
   labels_json: string;
   updated_at_gh: string | null;
+  first_pulled_at: string | null;
+  last_pulled_at: string | null;
 };
 
 type CommentSeed = {
@@ -246,7 +248,7 @@ export class GitcrawlService {
       .all(repository.id, repository.id) as Array<{ thread_id: number; cluster_id: number }>;
     for (const row of clusterRows) clusterIds.set(row.thread_id, row.cluster_id);
 
-    let sql = 'select * from threads where repo_id = ?';
+    let sql = "select * from threads where repo_id = ? and state = 'open'";
     const args: Array<string | number> = [repository.id];
     if (params.kind) {
       sql += ' and kind = ?';
@@ -260,7 +262,10 @@ export class GitcrawlService {
     });
   }
 
-  async syncRepository(params: SyncOptions): Promise<{ runId: number; threadsSynced: number; commentsSynced: number }> {
+  async syncRepository(
+    params: SyncOptions,
+  ): Promise<{ runId: number; threadsSynced: number; commentsSynced: number; threadsClosed: number }> {
+    const crawlStartedAt = nowIso();
     params.onProgress?.(`[sync] fetching repository metadata for ${params.owner}/${params.repo}`);
     const reporter = params.onProgress ? (message: string) => params.onProgress?.(message.replace(/^\[github\]/, '[sync/github]')) : undefined;
     const repoData = await this.github.getRepo(params.owner, params.repo, reporter);
@@ -285,7 +290,7 @@ export class GitcrawlService {
         params.onProgress?.(`[sync] ${index + 1}/${items.length} ${kind} #${number}`);
         try {
           const threadPayload = isPr ? await this.github.getPull(params.owner, params.repo, number, reporter) : item;
-          const threadId = this.upsertThread(repoId, kind, threadPayload);
+          const threadId = this.upsertThread(repoId, kind, threadPayload, crawlStartedAt);
           const comments: CommentSeed[] = [];
 
           const issueComments = await this.github.listIssueComments(params.owner, params.repo, number, reporter);
@@ -345,8 +350,17 @@ export class GitcrawlService {
         }
       }
 
-      this.finishRun('sync_runs', runId, 'completed', { threadsSynced, commentsSynced });
-      return { runId, threadsSynced, commentsSynced };
+      const threadsClosed = await this.reconcileMissingOpenThreads({
+        repoId,
+        owner: params.owner,
+        repo: params.repo,
+        crawlStartedAt,
+        reporter,
+        onProgress: params.onProgress,
+      });
+
+      this.finishRun('sync_runs', runId, 'completed', { threadsSynced, commentsSynced, threadsClosed });
+      return { runId, threadsSynced, commentsSynced, threadsClosed };
     } catch (error) {
       this.finishRun('sync_runs', runId, 'failed', null, error);
       throw error;
@@ -363,7 +377,7 @@ export class GitcrawlService {
         `select t.id, t.content_hash, d.raw_text, d.dedupe_text
          from threads t
          join documents d on d.thread_id = t.id
-         where t.repo_id = ?`;
+         where t.repo_id = ? and t.state = 'open'`;
       const args: Array<number> = [repository.id];
       if (params.threadNumber) {
         sql += ' and t.number = ?';
@@ -417,7 +431,7 @@ export class GitcrawlService {
         `select t.id, s.summary_text, s.content_hash
          from threads t
          join document_summaries s on s.thread_id = t.id
-         where t.repo_id = ? and s.summary_kind = ? and s.model = ?`;
+         where t.repo_id = ? and t.state = 'open' and s.summary_kind = ? and s.model = ?`;
       const args: Array<string | number> = [repository.id, 'dedupe_summary', this.config.summaryModel];
       if (params.threadNumber) {
         sql += ' and t.number = ?';
@@ -466,7 +480,7 @@ export class GitcrawlService {
           `select t.id, t.number, t.title, e.embedding_json
            from threads t
            join document_embeddings e on e.thread_id = t.id
-           where t.repo_id = ? and e.source_kind = ? and e.model = ?
+           where t.repo_id = ? and t.state = 'open' and e.source_kind = ? and e.model = ?
            order by t.number asc`,
         )
         .all(repository.id, 'dedupe_summary', this.config.embedModel) as Array<{
@@ -585,7 +599,7 @@ export class GitcrawlService {
            from documents_fts
            join documents d on d.id = documents_fts.rowid
            join threads t on t.id = d.thread_id
-           where t.repo_id = ? and documents_fts match ?
+           where t.repo_id = ? and t.state = 'open' and documents_fts match ?
            order by rank
            limit ?`,
         )
@@ -602,7 +616,7 @@ export class GitcrawlService {
           `select t.id, t.number, t.title, e.embedding_json
            from threads t
            join document_embeddings e on e.thread_id = t.id
-           where t.repo_id = ? and e.source_kind = ? and e.model = ?`,
+           where t.repo_id = ? and t.state = 'open' and e.source_kind = ? and e.model = ?`,
         )
         .all(repository.id, 'dedupe_summary', this.config.embedModel) as Array<{
           id: number;
@@ -624,7 +638,7 @@ export class GitcrawlService {
       ? (this.db
           .prepare(
             `select * from threads
-             where repo_id = ? and id in (${[...candidateIds].map(() => '?').join(',')})
+             where repo_id = ? and state = 'open' and id in (${[...candidateIds].map(() => '?').join(',')})
              order by updated_at_gh desc, number desc`,
           )
           .all(repository.id, ...candidateIds) as ThreadRow[])
@@ -823,7 +837,12 @@ export class GitcrawlService {
     return row.id;
   }
 
-  private upsertThread(repoId: number, kind: 'issue' | 'pull_request', payload: Record<string, unknown>): number {
+  private upsertThread(
+    repoId: number,
+    kind: 'issue' | 'pull_request',
+    payload: Record<string, unknown>,
+    pulledAt: string,
+  ): number {
     const title = String(payload.title ?? `#${payload.number}`);
     const body = typeof payload.body === 'string' ? payload.body : null;
     const labels = parseLabels(payload);
@@ -834,8 +853,8 @@ export class GitcrawlService {
         `insert into threads (
             repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
             labels_json, assignees_json, raw_json, content_hash, is_draft,
-            created_at_gh, updated_at_gh, closed_at_gh, merged_at_gh, updated_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            created_at_gh, updated_at_gh, closed_at_gh, merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           on conflict(repo_id, kind, number) do update set
             github_id = excluded.github_id,
             state = excluded.state,
@@ -853,6 +872,7 @@ export class GitcrawlService {
             updated_at_gh = excluded.updated_at_gh,
             closed_at_gh = excluded.closed_at_gh,
             merged_at_gh = excluded.merged_at_gh,
+            last_pulled_at = excluded.last_pulled_at,
             updated_at = excluded.updated_at`,
       )
       .run(
@@ -875,12 +895,90 @@ export class GitcrawlService {
         typeof payload.updated_at === 'string' ? payload.updated_at : null,
         typeof payload.closed_at === 'string' ? payload.closed_at : null,
         typeof payload.merged_at === 'string' ? payload.merged_at : null,
+        pulledAt,
+        pulledAt,
         nowIso(),
       );
     const row = this.db
       .prepare('select id from threads where repo_id = ? and kind = ? and number = ?')
       .get(repoId, kind, Number(payload.number)) as { id: number };
     return row.id;
+  }
+
+  private async reconcileMissingOpenThreads(params: {
+    repoId: number;
+    owner: string;
+    repo: string;
+    crawlStartedAt: string;
+    reporter?: (message: string) => void;
+    onProgress?: (message: string) => void;
+  }): Promise<number> {
+    const staleRows = this.db
+      .prepare(
+        `select id, number, kind
+         from threads
+         where repo_id = ?
+           and state = 'open'
+           and (last_pulled_at is null or last_pulled_at < ?)
+         order by number asc`,
+      )
+      .all(params.repoId, params.crawlStartedAt) as Array<{ id: number; number: number; kind: 'issue' | 'pull_request' }>;
+
+    if (staleRows.length === 0) {
+      return 0;
+    }
+
+    params.onProgress?.(
+      `[sync] reconciling ${staleRows.length} previously-open thread(s) not seen in the open crawl`,
+    );
+
+    let threadsClosed = 0;
+    for (const [index, row] of staleRows.entries()) {
+      if (index > 0 && index % SYNC_BATCH_SIZE === 0) {
+        params.onProgress?.(`[sync] stale reconciliation batch boundary reached at ${index} threads; sleeping 5s before continuing`);
+        await new Promise((resolve) => setTimeout(resolve, SYNC_BATCH_DELAY_MS));
+      }
+      params.onProgress?.(`[sync] reconciling stale ${row.kind} #${row.number}`);
+      const payload =
+        row.kind === 'pull_request'
+          ? await this.github.getPull(params.owner, params.repo, row.number, params.reporter)
+          : await this.github.getIssue(params.owner, params.repo, row.number, params.reporter);
+      const pulledAt = nowIso();
+      const state = String(payload.state ?? 'open');
+
+      this.db
+        .prepare(
+          `update threads
+           set state = ?,
+               raw_json = ?,
+               updated_at_gh = ?,
+               closed_at_gh = ?,
+               merged_at_gh = ?,
+               last_pulled_at = ?,
+               updated_at = ?
+           where id = ?`,
+        )
+        .run(
+          state,
+          asJson(payload),
+          typeof payload.updated_at === 'string' ? payload.updated_at : null,
+          typeof payload.closed_at === 'string' ? payload.closed_at : null,
+          typeof payload.merged_at === 'string' ? payload.merged_at : null,
+          pulledAt,
+          pulledAt,
+          row.id,
+        );
+
+      if (state !== 'open') {
+        threadsClosed += 1;
+      }
+    }
+
+    if (threadsClosed > 0) {
+      params.onProgress?.(`[sync] marked ${threadsClosed} stale thread(s) as closed after GitHub confirmation`);
+    }
+
+    return threadsClosed;
   }
 
   private replaceComments(threadId: number, comments: CommentSeed[]): void {

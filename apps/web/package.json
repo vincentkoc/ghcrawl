@@ -6,7 +6,7 @@
   "description": "Deferred future Vite + shadcn/ui web app placeholder",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
     "@gitcrawl/api-contract": "workspace:*"

@@ -9,7 +9,7 @@
   "scripts": {
     "cli": "tsx src/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
     "@gitcrawl/api-core": "workspace:*"

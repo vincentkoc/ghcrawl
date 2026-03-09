@@ -20,6 +20,7 @@ test('health endpoint returns contract payload', async () => {
       checkAuth: async () => undefined,
       getRepo: async () => ({}),
       listRepositoryIssues: async () => [],
+      getIssue: async () => ({}),
       getPull: async () => ({}),
       listIssueComments: async () => [],
       listPullReviews: async () => [],

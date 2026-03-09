@@ -143,3 +143,55 @@ test('neighbors endpoint returns contract payload', async () => {
     service.close();
   }
 });
+
+test('server returns 400 for malformed request inputs', async () => {
+  const service = new GitcrawlService({
+    config: {
+      workspaceRoot: process.cwd(),
+      configDir: '/tmp/gitcrawl-test',
+      configPath: '/tmp/gitcrawl-test/config.json',
+      configFileExists: true,
+      dbPath: ':memory:',
+      dbPathSource: 'config',
+      apiPort: 5179,
+      githubTokenSource: 'none',
+      openaiApiKeySource: 'none',
+      summaryModel: 'gpt-5-mini',
+      embedModel: 'text-embedding-3-large',
+      embedBatchSize: 8,
+      embedConcurrency: 10,
+      embedMaxUnread: 20,
+      openSearchIndex: 'gitcrawl-threads',
+    },
+    github: {
+      checkAuth: async () => undefined,
+      getRepo: async () => ({}),
+      listRepositoryIssues: async () => [],
+      getIssue: async () => ({}),
+      getPull: async () => ({}),
+      listIssueComments: async () => [],
+      listPullReviews: async () => [],
+      listPullReviewComments: async () => [],
+    },
+  });
+
+  const server = createApiServer(service);
+  try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert(address && typeof address === 'object');
+
+    const missingRepo = await fetch(`http://127.0.0.1:${address.port}/threads?owner=openclaw`);
+    assert.equal(missingRepo.status, 400);
+
+    const badJson = await fetch(`http://127.0.0.1:${address.port}/actions/rerun`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{"owner":"openclaw"',
+    });
+    assert.equal(badJson.status, 400);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    service.close();
+  }
+});

@@ -32,7 +32,7 @@ Commands:
   cluster <owner/repo> [--k <count>] [--threshold <score>]
   search <owner/repo> --query <text> [--mode keyword|semantic|hybrid]
   neighbors <owner/repo> --number <thread> [--limit <count>] [--threshold <score>]
-  tui <owner/repo>
+  tui [owner/repo]
   serve
 `;
 }
@@ -266,6 +266,10 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
         return;
       }
       case 'tui': {
+        if (rest.length === 0) {
+          await startTui({ service: getService() });
+          return;
+        }
         const { owner, repo } = parseRepoFlags(rest);
         await startTui({ service: getService(), owner, repo });
         return;

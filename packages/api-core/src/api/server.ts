@@ -1,6 +1,7 @@
 import http from 'node:http';
 
 import { actionRequestSchema } from '@gitcrawl/api-contract';
+import { ZodError } from 'zod';
 
 import { GitcrawlService, parseRepoParams } from '../service.js';
 
@@ -100,7 +101,17 @@ export function createApiServer(service: GitcrawlService): http.Server {
 
       sendJson(res, 404, { error: 'Not found' });
     } catch (error) {
-      sendJson(res, 500, { error: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(res, isBadRequestError(error, message) ? 400 : 500, { error: message });
     }
   });
+}
+
+function isBadRequestError(error: unknown, message: string): boolean {
+  return (
+    error instanceof SyntaxError ||
+    error instanceof ZodError ||
+    message.startsWith('Missing ') ||
+    message.startsWith('Invalid ')
+  );
 }

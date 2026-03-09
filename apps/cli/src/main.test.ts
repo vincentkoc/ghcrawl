@@ -17,7 +17,7 @@ test('run prints usage with no command', async () => {
 
   await run([], stdout);
   assert.match(output, /gitcrawl <command>/);
-  assert.match(output, /tui <owner\/repo>/);
+  assert.match(output, /tui \[owner\/repo\]/);
 });
 
 test('run prints usage for help flag', async () => {
@@ -31,7 +31,7 @@ test('run prints usage for help flag', async () => {
 
   await run(['--help'], stdout);
   assert.match(output, /gitcrawl <command>/);
-  assert.match(output, /tui <owner\/repo>/);
+  assert.match(output, /tui \[owner\/repo\]/);
 });
 
 test('parseOwnerRepo accepts owner slash repo syntax', () => {

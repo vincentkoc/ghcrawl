@@ -26,8 +26,8 @@ import { computeTuiLayout } from './layout.js';
 
 type StartTuiParams = {
   service: GitcrawlService;
-  owner: string;
-  repo: string;
+  owner?: string;
+  repo?: string;
 };
 
 type Widgets = {
@@ -48,7 +48,13 @@ const ACTIVITY_LOG_LIMIT = 200;
 const FOOTER_LOG_LINES = 4;
 
 export async function startTui(params: StartTuiParams): Promise<void> {
-  const widgets = createWidgets(params.owner, params.repo);
+  const selectedRepository =
+    params.owner && params.repo ? { owner: params.owner, repo: params.repo } : await pickRepository(params.service);
+  if (!selectedRepository) {
+    return;
+  }
+  const { owner, repo } = selectedRepository;
+  const widgets = createWidgets(owner, repo);
 
   let focusPane: TuiFocusPane = 'clusters';
   let sortMode: TuiClusterSortMode = 'recent';
@@ -67,6 +73,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   const threadDetailCache = new Map<number, ThreadDetailCacheEntry>();
   let syncJobRunning = false;
   let embedJobRunning = false;
+  let clusterJobRunning = false;
 
   const clearCaches = (): void => {
     clusterDetailCache.clear();
@@ -85,8 +92,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     const cached = clusterDetailCache.get(clusterId);
     if (cached) return cached;
     const detail = params.service.getTuiClusterDetail({
-      owner: params.owner,
-      repo: params.repo,
+      owner,
+      repo,
       clusterId,
     });
     clusterDetailCache.set(clusterId, detail);
@@ -100,8 +107,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     }
 
     const detail = params.service.getTuiThreadDetail({
-      owner: params.owner,
-      repo: params.repo,
+      owner,
+      repo,
       threadId,
       includeNeighbors,
     });
@@ -118,8 +125,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     const previousMemberId = preserveSelection ? selectedMemberThreadId : null;
     clearCaches();
     snapshot = params.service.getTuiSnapshot({
-      owner: params.owner,
-      repo: params.repo,
+      owner,
+      repo,
       minSize,
       sort: sortMode,
       search,
@@ -168,7 +175,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     applyRect(widgets.detail, layout.detail);
     applyRect(widgets.footer, layout.footer);
 
-    const repoLabel = snapshot?.repository.fullName ?? `${params.owner}/${params.repo}`;
+    const repoLabel = snapshot?.repository.fullName ?? `${owner}/${repo}`;
     const ghStatus = formatRelativeTime(snapshot?.stats.lastGithubReconciliationAt ?? null);
     const embedAge = formatRelativeTime(snapshot?.stats.lastEmbedRefreshAt ?? null);
     const embedStatus =
@@ -200,14 +207,16 @@ export async function startTui(params: StartTuiParams): Promise<void> {
 
     widgets.detail.setContent(renderDetailPane(threadDetail, clusterDetail, focusPane));
     updatePaneStyles(widgets, focusPane);
-    const activeJobs = [syncJobRunning ? 'sync' : null, embedJobRunning ? 'embed' : null].filter(Boolean).join(', ') || 'idle';
+    const activeJobs = [syncJobRunning ? 'sync' : null, embedJobRunning ? 'embed' : null, clusterJobRunning ? 'cluster' : null]
+      .filter(Boolean)
+      .join(', ') || 'idle';
     const logLines = activityLines.slice(-FOOTER_LOG_LINES);
     const footerLines = [...logLines];
     while (footerLines.length < FOOTER_LOG_LINES) {
       footerLines.unshift('');
     }
     footerLines.push(
-      `${status}  |  jobs:${activeJobs}  |  Tab focus  j/k move-or-scroll  PgUp/PgDn scroll  g sync  e embed  s sort  f min  / filter  r refresh  o open  q quit`,
+      `${status}  |  jobs:${activeJobs}  |  Tab focus  j/k move-or-scroll  PgUp/PgDn scroll  g sync  e embed  c cluster  s sort  f min  / filter  r refresh  o open  q quit`,
     );
     widgets.footer.setContent(footerLines.join('\n'));
     widgets.screen.render();
@@ -234,8 +243,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     void (async () => {
       try {
         const result = await params.service.syncRepository({
-          owner: params.owner,
-          repo: params.repo,
+          owner,
+          repo,
           onProgress: pushActivity,
         });
         pushActivity(
@@ -263,8 +272,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     void (async () => {
       try {
         const result = await params.service.embedRepository({
-          owner: params.owner,
-          repo: params.repo,
+          owner,
+          repo,
           onProgress: pushActivity,
         });
         pushActivity(`[jobs] embed refresh complete embeddings=${result.embedded}`);
@@ -273,6 +282,33 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         pushActivity(`[jobs] embed refresh failed: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
         embedJobRunning = false;
+        status = 'Ready';
+        render();
+      }
+    })();
+  };
+
+  const startClusterJob = (): void => {
+    if (clusterJobRunning) {
+      pushActivity('[jobs] cluster refresh already running');
+      return;
+    }
+    clusterJobRunning = true;
+    status = 'Running cluster refresh';
+    pushActivity('[jobs] starting cluster refresh');
+    void (async () => {
+      try {
+        const result = params.service.clusterRepository({
+          owner,
+          repo,
+          onProgress: pushActivity,
+        });
+        pushActivity(`[jobs] cluster refresh complete clusters=${result.clusters} edges=${result.edges}`);
+        refreshAll(true);
+      } catch (error) {
+        pushActivity(`[jobs] cluster refresh failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        clusterJobRunning = false;
         status = 'Ready';
         render();
       }
@@ -409,6 +445,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   widgets.screen.key(['/'], () => promptFilter());
   widgets.screen.key(['g'], () => startSyncJob());
   widgets.screen.key(['e'], () => startEmbedJob());
+  widgets.screen.key(['c'], () => startClusterJob());
   widgets.screen.key(['r'], () => {
     status = 'Refreshing';
     refreshAll(true);
@@ -422,7 +459,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
 
   widgets.screen.program.hideCursor();
   refreshAll(false);
-  pushActivity('[jobs] press g to reconcile GitHub and e to refresh embeddings');
+  pushActivity('[jobs] press g to reconcile GitHub, e to refresh embeddings, and c to rebuild clusters');
   updateFocus('clusters');
 
   await new Promise<void>((resolve) => widgets.screen.once('destroy', () => resolve()));
@@ -496,7 +533,7 @@ function updatePaneStyles(widgets: Widgets, focus: TuiFocusPane): void {
   widgets.detail.style.border = { fg: focus === 'detail' ? 'white' : '#fde74c' };
 }
 
-function renderDetailPane(
+export function renderDetailPane(
   threadDetail: TuiThreadDetail | null,
   clusterDetail: TuiClusterDetail | null,
   focusPane: TuiFocusPane,
@@ -505,37 +542,41 @@ function renderDetailPane(
     return 'No cluster selected.\n\nRun `gitcrawl cluster owner/repo` if you have not clustered this repository yet.';
   }
   if (!threadDetail) {
-    return `{bold}${clusterDetail.displayTitle}{/bold}\n\nSelect a member to inspect thread details.`;
+    return `{bold}${escapeBlessedText(clusterDetail.displayTitle)}{/bold}\n\nSelect a member to inspect thread details.`;
   }
 
   const thread = threadDetail.thread;
-  const labels = thread.labels.length > 0 ? thread.labels.join(', ') : 'none';
+  const labels = thread.labels.length > 0 ? escapeBlessedText(thread.labels.join(', ')) : 'none';
   const summaries = Object.entries(threadDetail.summaries)
-    .map(([key, value]) => `{bold}${key}:{/bold}\n${value}`)
+    .map(([key, value]) => `{bold}${key}:{/bold}\n${escapeBlessedText(value)}`)
     .join('\n\n');
   const neighbors =
     threadDetail.neighbors.length > 0
       ? threadDetail.neighbors
-          .map((neighbor) => `#${neighbor.number} ${neighbor.kind} ${(neighbor.score * 100).toFixed(1)}%  ${neighbor.title}`)
+          .map((neighbor) => `#${neighbor.number} ${neighbor.kind} ${(neighbor.score * 100).toFixed(1)}%  ${escapeBlessedText(neighbor.title)}`)
           .join('\n')
       : focusPane === 'detail'
         ? 'No neighbors available.'
         : 'Neighbors load when the detail pane is focused.';
   return [
-    `{bold}${thread.kind} #${thread.number}{/bold}  ${thread.title}`,
+    `{bold}${thread.kind} #${thread.number}{/bold}  ${escapeBlessedText(thread.title)}`,
     '',
-    `{bold}Author:{/bold} ${thread.authorLogin ?? 'unknown'}`,
+    `{bold}Author:{/bold} ${escapeBlessedText(thread.authorLogin ?? 'unknown')}`,
     `{bold}Updated:{/bold} ${thread.updatedAtGh ?? 'unknown'}`,
     `{bold}Labels:{/bold} ${labels}`,
-    `{bold}URL:{/bold} ${thread.htmlUrl}`,
+    `{bold}URL:{/bold} ${escapeBlessedText(thread.htmlUrl)}`,
     '',
     `{bold}Body{/bold}`,
-    thread.body ?? '(no body)',
+    escapeBlessedText(thread.body ?? '(no body)'),
     summaries ? `\n\n${summaries}` : '',
     `\n\n{bold}Neighbors{/bold}\n${neighbors}`,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+export function escapeBlessedText(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}');
 }
 
 function applyRect(element: blessed.Widgets.BoxElement | blessed.Widgets.ListElement, rect: { top: number; left: number; width: number; height: number }): void {
@@ -552,6 +593,68 @@ function openUrl(url: string): void {
     stdio: 'ignore',
   });
   child.unref();
+}
+
+async function pickRepository(service: GitcrawlService): Promise<{ owner: string; repo: string } | null> {
+  const repositories = service.listRepositories().repositories
+    .slice()
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt) || left.fullName.localeCompare(right.fullName));
+
+  if (repositories.length === 0) {
+    throw new Error('No repositories found in the local DB. Run sync first.');
+  }
+
+  const screen = blessed.screen({
+    smartCSR: true,
+    fullUnicode: true,
+    dockBorders: true,
+    autoPadding: false,
+    title: 'gitcrawl repository picker',
+  });
+  const box = blessed.list({
+    parent: screen,
+    border: 'line',
+    label: ' Repositories ',
+    keys: true,
+    vi: true,
+    mouse: false,
+    top: 'center',
+    left: 'center',
+    width: '70%',
+    height: '70%',
+    style: {
+      border: { fg: '#5bc0eb' },
+      item: { fg: 'white' },
+      selected: { bg: '#5bc0eb', fg: 'black', bold: true },
+    },
+    items: repositories.map((repository) => `${repository.fullName}  ${formatRelativeTime(repository.updatedAt)}`),
+  });
+  const help = blessed.box({
+    parent: screen,
+    bottom: 0,
+    left: 0,
+    width: '100%',
+    height: 1,
+    content: 'Select a local repository with Enter. Use j/k or arrows to move. Press q to quit.',
+    style: { fg: 'black', bg: '#5bc0eb' },
+  });
+
+  box.focus();
+  box.select(0);
+  screen.render();
+
+  return await new Promise<{ owner: string; repo: string } | null>((resolve) => {
+    const finish = (value: { owner: string; repo: string } | null): void => {
+      screen.destroy();
+      resolve(value);
+    };
+
+    screen.key(['q', 'C-c', 'escape'], () => finish(null));
+    box.on('select', (_item, index) => {
+      const selected = repositories[index];
+      finish(selected ? { owner: selected.owner, repo: selected.name } : null);
+    });
+  });
 }
 
 function formatActivityTimestamp(now: Date = new Date()): string {

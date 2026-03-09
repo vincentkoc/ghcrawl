@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { formatLogLine, parseOwnerRepo, parseRepoFlags, resolveSinceValue, run } from './main.js';
+import { formatDoctorReport, formatLogLine, parseOwnerRepo, parseRepoFlags, resolveSinceValue, run } from './main.js';
 
 test('run prints usage with no command', async () => {
   let output = '';
@@ -49,6 +49,37 @@ test('run prints advanced commands when dev mode is enabled', async () => {
   assert.match(output, /Advanced Commands:/);
   assert.match(output, /summarize <owner\/repo>/);
   assert.match(output, /purge-comments <owner\/repo>/);
+});
+
+test('run prints pretty doctor output on a tty', async () => {
+  let output = '';
+  const stdout = {
+    isTTY: true,
+    write(chunk: string) {
+      output += chunk;
+      return true;
+    },
+  } as unknown as NodeJS.WritableStream;
+
+  await run(['doctor'], stdout);
+  assert.match(output, /gitcrawl doctor/);
+  assert.match(output, /Health/);
+  assert.doesNotMatch(output, /^\s*\{/m);
+});
+
+test('run prints json doctor output when explicitly requested', async () => {
+  let output = '';
+  const stdout = {
+    isTTY: true,
+    write(chunk: string) {
+      output += chunk;
+      return true;
+    },
+  } as unknown as NodeJS.WritableStream;
+
+  await run(['doctor', '--json'], stdout);
+  assert.match(output, /"health"/);
+  assert.match(output, /"github"/);
 });
 
 test('parseOwnerRepo accepts owner slash repo syntax', () => {
@@ -96,6 +127,39 @@ test('resolveSinceValue rejects unsupported syntax', () => {
 
 test('formatLogLine prefixes ISO timestamps with millisecond resolution', () => {
   assert.equal(formatLogLine('[sync] hello', new Date('2026-03-09T12:34:56.789Z')), '[2026-03-09T12:34:56.789Z] [sync] hello');
+});
+
+test('formatDoctorReport renders a human-readable health summary', () => {
+  const rendered = formatDoctorReport({
+    health: {
+      ok: true,
+      configPath: '/tmp/config.json',
+      configFileExists: true,
+      dbPath: '/tmp/gitcrawl.db',
+      apiPort: 5179,
+      githubConfigured: true,
+      openaiConfigured: true,
+    },
+    github: {
+      configured: true,
+      source: 'config',
+      formatOk: true,
+      authOk: true,
+      error: null,
+    },
+    openai: {
+      configured: false,
+      source: 'none',
+      formatOk: false,
+      authOk: false,
+      error: 'missing',
+    },
+  });
+
+  assert.match(rendered, /config path: \/tmp\/config\.json/);
+  assert.match(rendered, /GitHub/);
+  assert.match(rendered, /OpenAI/);
+  assert.match(rendered, /note: missing/);
 });
 
 test('published cli package exposes a gitcrawl bin shim', () => {

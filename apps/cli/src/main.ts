@@ -19,6 +19,8 @@ type CommandName =
   | 'tui'
   | 'serve';
 
+type DoctorResult = Awaited<ReturnType<GitcrawlService['doctor']>>;
+
 function usage(devMode = false): string {
   const lines = [
     'gitcrawl <command> [options]',
@@ -153,6 +155,44 @@ function writeProgress(message: string): void {
   process.stderr.write(`${formatLogLine(message)}\n`);
 }
 
+function formatBooleanStatus(value: boolean): string {
+  return value ? 'yes' : 'no';
+}
+
+export function formatDoctorReport(result: DoctorResult): string {
+  const lines = [
+    'gitcrawl doctor',
+    '',
+    'Health',
+    `  ok: ${formatBooleanStatus(result.health.ok)}`,
+    `  config path: ${result.health.configPath}`,
+    `  config file exists: ${formatBooleanStatus(result.health.configFileExists)}`,
+    `  db path: ${result.health.dbPath}`,
+    `  api port: ${result.health.apiPort}`,
+    '',
+    'GitHub',
+    `  configured: ${formatBooleanStatus(result.github.configured)}`,
+    `  source: ${result.github.source}`,
+    `  format ok: ${formatBooleanStatus(result.github.formatOk)}`,
+    `  auth ok: ${formatBooleanStatus(result.github.authOk)}`,
+  ];
+  if (result.github.error) {
+    lines.push(`  note: ${result.github.error}`);
+  }
+  lines.push(
+    '',
+    'OpenAI',
+    `  configured: ${formatBooleanStatus(result.openai.configured)}`,
+    `  source: ${result.openai.source}`,
+    `  format ok: ${formatBooleanStatus(result.openai.formatOk)}`,
+    `  auth ok: ${formatBooleanStatus(result.openai.authOk)}`,
+  );
+  if (result.openai.error) {
+    lines.push(`  note: ${result.openai.error}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
 function closeService(service: GitcrawlService | null): void {
   if (service) {
     service.close();
@@ -187,7 +227,15 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
         return;
       }
       case 'doctor': {
-        stdout.write(`${JSON.stringify(await getService().doctor(), null, 2)}\n`);
+        const parsed = parseArgs({
+          args: rest,
+          options: {
+            json: { type: 'boolean' },
+          },
+        });
+        const result = await getService().doctor();
+        const shouldWriteJson = parsed.values.json === true || !stdout.isTTY;
+        stdout.write(shouldWriteJson ? `${JSON.stringify(result, null, 2)}\n` : formatDoctorReport(result));
         return;
       }
       case 'sync': {

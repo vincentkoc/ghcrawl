@@ -68,8 +68,8 @@ jobs:
       - name: Install Node.js and dependencies
         uses: ./.github/actions/configure-nodejs
 
-      - name: Initialize local runtime
-        run: pnpm bootstrap
+      - name: Verify non-interactive doctor JSON
+        run: pnpm health
 
       - name: Print installed-bin usage from bin shim
         run: node ./apps/cli/bin/gitcrawl.js --help

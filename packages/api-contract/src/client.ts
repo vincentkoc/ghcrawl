@@ -1,15 +1,23 @@
 import {
   actionRequestSchema,
   actionResponseSchema,
+  clusterDetailResponseSchema,
+  clusterSummariesResponseSchema,
   clustersResponseSchema,
   healthResponseSchema,
+  refreshRequestSchema,
+  refreshResponseSchema,
   repositoriesResponseSchema,
   searchResponseSchema,
   threadsResponseSchema,
   type ActionRequest,
   type ActionResponse,
+  type ClusterDetailResponse,
+  type ClusterSummariesResponse,
   type ClustersResponse,
   type HealthResponse,
+  type RefreshRequest,
+  type RefreshResponse,
   type RepositoriesResponse,
   type SearchMode,
   type SearchResponse,
@@ -22,6 +30,22 @@ export type GitcrawlClient = {
   listThreads: (params: { owner: string; repo: string; kind?: 'issue' | 'pull_request' }) => Promise<ThreadsResponse>;
   search: (params: { owner: string; repo: string; query: string; mode?: SearchMode }) => Promise<SearchResponse>;
   listClusters: (params: { owner: string; repo: string }) => Promise<ClustersResponse>;
+  listClusterSummaries: (params: {
+    owner: string;
+    repo: string;
+    minSize?: number;
+    limit?: number;
+    sort?: 'recent' | 'size';
+    search?: string;
+  }) => Promise<ClusterSummariesResponse>;
+  getClusterDetail: (params: {
+    owner: string;
+    repo: string;
+    clusterId: number;
+    memberLimit?: number;
+    bodyChars?: number;
+  }) => Promise<ClusterDetailResponse>;
+  refresh: (request: RefreshRequest) => Promise<RefreshResponse>;
   rerun: (request: ActionRequest) => Promise<ActionResponse>;
 };
 
@@ -68,6 +92,35 @@ export function createGitcrawlClient(baseUrl: string, fetchImpl: FetchLike = fet
       const search = new URLSearchParams({ owner: params.owner, repo: params.repo });
       const res = await fetchImpl(`${normalized}/clusters?${search.toString()}`);
       return readJson(res, clustersResponseSchema);
+    },
+    async listClusterSummaries(params) {
+      const search = new URLSearchParams({ owner: params.owner, repo: params.repo });
+      if (params.minSize !== undefined) search.set('minSize', String(params.minSize));
+      if (params.limit !== undefined) search.set('limit', String(params.limit));
+      if (params.sort) search.set('sort', params.sort);
+      if (params.search) search.set('search', params.search);
+      const res = await fetchImpl(`${normalized}/cluster-summaries?${search.toString()}`);
+      return readJson(res, clusterSummariesResponseSchema);
+    },
+    async getClusterDetail(params) {
+      const search = new URLSearchParams({
+        owner: params.owner,
+        repo: params.repo,
+        clusterId: String(params.clusterId),
+      });
+      if (params.memberLimit !== undefined) search.set('memberLimit', String(params.memberLimit));
+      if (params.bodyChars !== undefined) search.set('bodyChars', String(params.bodyChars));
+      const res = await fetchImpl(`${normalized}/cluster-detail?${search.toString()}`);
+      return readJson(res, clusterDetailResponseSchema);
+    },
+    async refresh(request) {
+      const body = refreshRequestSchema.parse(request);
+      const res = await fetchImpl(`${normalized}/actions/refresh`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return readJson(res, refreshResponseSchema);
     },
     async rerun(request) {
       const body = actionRequestSchema.parse(request);

@@ -4,23 +4,35 @@ import crypto from 'node:crypto';
 import { IterableMapper } from '@shutterstock/p-map-iterable';
 import {
   actionResponseSchema,
+  clusterDetailResponseSchema,
+  clusterResultSchema,
+  clusterSummariesResponseSchema,
   clustersResponseSchema,
+  embedResultSchema,
   healthResponseSchema,
   neighborsResponseSchema,
+  refreshResponseSchema,
   repositoriesResponseSchema,
   searchResponseSchema,
+  syncResultSchema,
   threadsResponseSchema,
   type ActionRequest,
   type ActionResponse,
+  type ClusterDetailResponse,
   type ClusterDto,
+  type ClusterResultDto,
+  type ClusterSummariesResponse,
   type ClustersResponse,
+  type EmbedResultDto,
   type HealthResponse,
   type NeighborsResponse,
+  type RefreshResponse,
   type RepositoriesResponse,
   type RepositoryDto,
   type SearchHitDto,
   type SearchMode,
   type SearchResponse,
+  type SyncResultDto,
   type ThreadDto,
   type ThreadsResponse,
 } from '@gitcrawl/api-contract';
@@ -332,6 +344,14 @@ function normalizeSummaryText(value: string): string {
   return value.replace(/\r/g, '\n').replace(/\s+/g, ' ').trim();
 }
 
+function snippetText(value: string | null | undefined, maxChars: number): string | null {
+  if (!value) return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+}
+
 function repositoryToDto(row: Record<string, unknown>): RepositoryDto {
   return {
     id: Number(row.id),
@@ -488,7 +508,7 @@ export class GitcrawlService {
 
   async syncRepository(
     params: SyncOptions,
-  ): Promise<{ runId: number; threadsSynced: number; commentsSynced: number; threadsClosed: number }> {
+  ): Promise<SyncResultDto> {
     const crawlStartedAt = params.startedAt ?? nowIso();
     const includeComments = params.includeComments ?? false;
     const github = this.requireGithub();
@@ -594,7 +614,7 @@ export class GitcrawlService {
         overlapReferenceAt,
         reconciledOpenCloseAt,
       } satisfies SyncRunStats, undefined, finishedAt);
-      return { runId, threadsSynced, commentsSynced, threadsClosed };
+      return syncResultSchema.parse({ runId, threadsSynced, commentsSynced, threadsClosed });
     } catch (error) {
       this.finishRun('sync_runs', runId, 'failed', null, error);
       throw error;
@@ -739,7 +759,7 @@ export class GitcrawlService {
     repo: string;
     threadNumber?: number;
     onProgress?: (message: string) => void;
-  }): Promise<{ runId: number; embedded: number }> {
+  }): Promise<EmbedResultDto> {
     const ai = this.requireAi();
     const repository = this.requireRepository(params.owner, params.repo);
     const runId = this.startRun('embedding_runs', repository.id, params.threadNumber ? `thread:${params.threadNumber}` : repository.fullName);
@@ -784,7 +804,7 @@ export class GitcrawlService {
       }
 
       this.finishRun('embedding_runs', runId, 'completed', { embedded });
-      return { runId, embedded };
+      return embedResultSchema.parse({ runId, embedded });
     } catch (error) {
       this.finishRun('embedding_runs', runId, 'failed', null, error);
       throw error;
@@ -797,7 +817,7 @@ export class GitcrawlService {
     minScore?: number;
     k?: number;
     onProgress?: (message: string) => void;
-  }): { runId: number; edges: number; clusters: number } {
+  }): ClusterResultDto {
     const repository = this.requireRepository(params.owner, params.repo);
     const runId = this.startRun('cluster_runs', repository.id, repository.fullName);
     const minScore = params.minScore ?? 0.82;
@@ -879,7 +899,7 @@ export class GitcrawlService {
       params.onProgress?.(`[cluster] persisted ${clusters.length} cluster(s)`);
 
       this.finishRun('cluster_runs', runId, 'completed', { edges: edges.length, clusters: clusters.length });
-      return { runId, edges: edges.length, clusters: clusters.length };
+      return clusterResultSchema.parse({ runId, edges: edges.length, clusters: clusters.length });
     } catch (error) {
       this.finishRun('cluster_runs', runId, 'failed', null, error);
       throw error;
@@ -1118,6 +1138,153 @@ export class GitcrawlService {
     return clustersResponseSchema.parse({
       repository,
       clusters: Array.from(clusters.values()),
+    });
+  }
+
+  async refreshRepository(params: {
+    owner: string;
+    repo: string;
+    sync?: boolean;
+    embed?: boolean;
+    cluster?: boolean;
+    onProgress?: (message: string) => void;
+  }): Promise<RefreshResponse> {
+    const selected = {
+      sync: params.sync ?? true,
+      embed: params.embed ?? true,
+      cluster: params.cluster ?? true,
+    };
+    if (!selected.sync && !selected.embed && !selected.cluster) {
+      throw new Error('Refresh requires at least one selected step');
+    }
+    if (!selected.sync) {
+      this.requireRepository(params.owner, params.repo);
+    }
+
+    let sync: SyncResultDto | null = null;
+    let embed: EmbedResultDto | null = null;
+    let cluster: ClusterResultDto | null = null;
+
+    if (selected.sync) {
+      sync = await this.syncRepository({
+        owner: params.owner,
+        repo: params.repo,
+        onProgress: params.onProgress,
+      });
+    }
+    if (selected.embed) {
+      embed = await this.embedRepository({
+        owner: params.owner,
+        repo: params.repo,
+        onProgress: params.onProgress,
+      });
+    }
+    if (selected.cluster) {
+      cluster = this.clusterRepository({
+        owner: params.owner,
+        repo: params.repo,
+        onProgress: params.onProgress,
+      });
+    }
+
+    const repository = this.requireRepository(params.owner, params.repo);
+
+    return refreshResponseSchema.parse({
+      repository,
+      selected,
+      sync,
+      embed,
+      cluster,
+    });
+  }
+
+  listClusterSummaries(params: {
+    owner: string;
+    repo: string;
+    minSize?: number;
+    limit?: number;
+    sort?: TuiClusterSortMode;
+    search?: string;
+  }): ClusterSummariesResponse {
+    const snapshot = this.getTuiSnapshot({
+      owner: params.owner,
+      repo: params.repo,
+      minSize: params.minSize,
+      sort: params.sort,
+      search: params.search,
+    });
+    const clusters = params.limit ? snapshot.clusters.slice(0, params.limit) : snapshot.clusters;
+    return clusterSummariesResponseSchema.parse({
+      repository: snapshot.repository,
+      stats: snapshot.stats,
+      clusters: clusters.map((cluster) => ({
+        clusterId: cluster.clusterId,
+        displayTitle: cluster.displayTitle,
+        totalCount: cluster.totalCount,
+        issueCount: cluster.issueCount,
+        pullRequestCount: cluster.pullRequestCount,
+        latestUpdatedAt: cluster.latestUpdatedAt,
+        representativeThreadId: cluster.representativeThreadId,
+        representativeNumber: cluster.representativeNumber,
+        representativeKind: cluster.representativeKind,
+      })),
+    });
+  }
+
+  getClusterDetailDump(params: {
+    owner: string;
+    repo: string;
+    clusterId: number;
+    memberLimit?: number;
+    bodyChars?: number;
+  }): ClusterDetailResponse {
+    const snapshot = this.getTuiSnapshot({
+      owner: params.owner,
+      repo: params.repo,
+      minSize: 0,
+    });
+    const cluster = snapshot.clusters.find((item) => item.clusterId === params.clusterId);
+    if (!cluster) {
+      throw new Error(`Cluster ${params.clusterId} was not found for ${snapshot.repository.fullName}.`);
+    }
+
+    const detail = this.getTuiClusterDetail({
+      owner: params.owner,
+      repo: params.repo,
+      clusterId: params.clusterId,
+    });
+    const members = detail.members.slice(0, params.memberLimit ?? detail.members.length).map((member) => {
+      const threadDetail = this.getTuiThreadDetail({
+        owner: params.owner,
+        repo: params.repo,
+        threadId: member.id,
+        includeNeighbors: false,
+      });
+      return {
+        thread: {
+          ...threadDetail.thread,
+          body: null,
+        },
+        bodySnippet: snippetText(threadDetail.thread.body, params.bodyChars ?? 280),
+        summaries: threadDetail.summaries,
+      };
+    });
+
+    return clusterDetailResponseSchema.parse({
+      repository: snapshot.repository,
+      stats: snapshot.stats,
+      cluster: {
+        clusterId: cluster.clusterId,
+        displayTitle: cluster.displayTitle,
+        totalCount: cluster.totalCount,
+        issueCount: cluster.issueCount,
+        pullRequestCount: cluster.pullRequestCount,
+        latestUpdatedAt: cluster.latestUpdatedAt,
+        representativeThreadId: cluster.representativeThreadId,
+        representativeNumber: cluster.representativeNumber,
+        representativeKind: cluster.representativeKind,
+      },
+      members,
     });
   }
 

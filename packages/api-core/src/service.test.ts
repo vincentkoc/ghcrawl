@@ -1307,6 +1307,225 @@ test('tui cluster detail and thread detail expose members, summaries, and neighb
   }
 });
 
+test('refreshRepository runs sync, embed, and cluster in order and returns the combined result', async () => {
+  const messages: string[] = [];
+  const service = makeTestService(
+    {
+      checkAuth: async () => undefined,
+      getRepo: async () => ({ id: 1, full_name: 'openclaw/openclaw' }),
+      listRepositoryIssues: async () => [
+        {
+          id: 100,
+          number: 42,
+          state: 'open',
+          title: 'Downloader hangs',
+          body: 'The transfer never finishes.',
+          html_url: 'https://github.com/openclaw/openclaw/issues/42',
+          labels: [{ name: 'bug' }],
+          assignees: [],
+          user: { login: 'alice', type: 'User' },
+          updated_at: '2026-03-09T00:00:00Z',
+        },
+      ],
+      getIssue: async (_owner, _repo, number) => ({
+        id: 100,
+        number,
+        state: 'open',
+        title: 'Downloader hangs',
+        body: 'The transfer never finishes.',
+        html_url: `https://github.com/openclaw/openclaw/issues/${number}`,
+        labels: [{ name: 'bug' }],
+        assignees: [],
+        user: { login: 'alice', type: 'User' },
+        updated_at: '2026-03-09T00:00:00Z',
+      }),
+      getPull: async () => {
+        throw new Error('not expected');
+      },
+      listIssueComments: async () => [],
+      listPullReviews: async () => [],
+      listPullReviewComments: async () => [],
+    },
+    {
+      checkAuth: async () => undefined,
+      summarizeThread: async () => {
+        throw new Error('not expected');
+      },
+      embedTexts: async ({ texts }) => texts.map(() => [1, 0]),
+    },
+  );
+
+  try {
+    const result = await service.refreshRepository({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      onProgress: (message) => messages.push(message),
+    });
+
+    assert.equal(result.selected.sync, true);
+    assert.equal(result.selected.embed, true);
+    assert.equal(result.selected.cluster, true);
+    assert.equal(result.sync?.threadsSynced, 1);
+    assert.equal(result.embed?.embedded, 2);
+    assert.equal(result.cluster?.clusters, 1);
+
+    const syncIndex = messages.findIndex((message) => message.includes('[sync]'));
+    const embedIndex = messages.findIndex((message) => message.includes('[embed]'));
+    const clusterIndex = messages.findIndex((message) => message.includes('[cluster]'));
+    assert.ok(syncIndex >= 0);
+    assert.ok(embedIndex > syncIndex);
+    assert.ok(clusterIndex > embedIndex);
+  } finally {
+    service.close();
+  }
+});
+
+test('agent cluster summary and detail dumps expose repo stats, snippets, and summaries', () => {
+  const service = makeTestService({
+    checkAuth: async () => undefined,
+    getRepo: async () => ({}),
+    listRepositoryIssues: async () => [],
+    getIssue: async () => ({}),
+    getPull: async () => ({}),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+  });
+
+  try {
+    const now = '2026-03-09T12:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+
+    const insertThread = service.db.prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertThread.run(
+      10,
+      1,
+      '100',
+      42,
+      'issue',
+      'open',
+      'Downloader hangs',
+      'The transfer never finishes after a large file download and needs to be retried.',
+      'alice',
+      'User',
+      'https://github.com/openclaw/openclaw/issues/42',
+      '["bug"]',
+      '[]',
+      '{}',
+      'hash-42',
+      0,
+      now,
+      '2026-03-09T10:00:00Z',
+      null,
+      null,
+      now,
+      now,
+      now,
+    );
+    insertThread.run(
+      11,
+      1,
+      '101',
+      43,
+      'pull_request',
+      'open',
+      'Fix downloader hang',
+      'This updates the retry logic and timeout handling.',
+      'bob',
+      'User',
+      'https://github.com/openclaw/openclaw/pull/43',
+      '["bug"]',
+      '[]',
+      '{}',
+      'hash-43',
+      0,
+      now,
+      '2026-03-09T11:00:00Z',
+      null,
+      null,
+      now,
+      now,
+      now,
+    );
+
+    service.db
+      .prepare(`insert into sync_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 'openclaw/openclaw', 'completed', now, '2026-03-09T12:30:00Z');
+    service.db
+      .prepare(`insert into embedding_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 'openclaw/openclaw', 'completed', now, '2026-03-09T12:45:00Z');
+    service.db
+      .prepare(`insert into cluster_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 'openclaw/openclaw', 'completed', now, '2026-03-09T13:00:00Z');
+    service.db
+      .prepare(
+        `insert into clusters (id, repo_id, cluster_run_id, representative_thread_id, member_count, created_at)
+         values (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(100, 1, 1, 10, 2, now);
+    service.db
+      .prepare(
+        `insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at)
+         values (?, ?, ?, ?)`,
+      )
+      .run(100, 10, null, now);
+    service.db
+      .prepare(
+        `insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at)
+         values (?, ?, ?, ?)`,
+      )
+      .run(100, 11, 0.93, now);
+    service.db
+      .prepare(
+        `insert into document_summaries (thread_id, summary_kind, model, content_hash, summary_text, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(10, 'dedupe_summary', 'gpt-5-mini', 'hash-dedupe', 'Transfer stalls near completion.', now, now);
+    service.db
+      .prepare(
+        `insert into document_embeddings (thread_id, source_kind, model, dimensions, content_hash, embedding_json, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(10, 'title', 'text-embedding-3-large', 2, 'hash-title-42', '[1,0]', now, now);
+    service.db
+      .prepare(
+        `insert into document_embeddings (thread_id, source_kind, model, dimensions, content_hash, embedding_json, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(11, 'title', 'text-embedding-3-large', 2, 'hash-title-43', '[0.95,0.05]', now, now);
+
+    const summaries = service.listClusterSummaries({ owner: 'openclaw', repo: 'openclaw', minSize: 0 });
+    assert.equal(summaries.stats.openIssueCount, 1);
+    assert.equal(summaries.clusters.length, 1);
+    assert.equal(summaries.clusters[0]?.displayTitle, 'Downloader hangs');
+
+    const detail = service.getClusterDetailDump({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      clusterId: 100,
+      memberLimit: 1,
+      bodyChars: 30,
+    });
+    assert.equal(detail.members.length, 1);
+    assert.equal(detail.members[0]?.thread.number, 42);
+    assert.equal(detail.members[0]?.bodySnippet, 'The transfer never finishes a…');
+    assert.equal(detail.members[0]?.summaries.dedupe_summary, 'Transfer stalls near completion.');
+  } finally {
+    service.close();
+  }
+});
+
 test('getTuiThreadDetail can skip neighbor loading for fast browse paths', () => {
   const service = makeTestService({
     checkAuth: async () => undefined,

@@ -1,6 +1,6 @@
 import http from 'node:http';
 
-import { actionRequestSchema } from '@gitcrawl/api-contract';
+import { actionRequestSchema, refreshRequestSchema } from '@gitcrawl/api-contract';
 import { ZodError } from 'zod';
 
 import { GitcrawlService, parseRepoParams } from '../service.js';
@@ -93,9 +93,63 @@ export function createApiServer(service: GitcrawlService): http.Server {
         return;
       }
 
+      if (req.method === 'GET' && url.pathname === '/cluster-summaries') {
+        const params = parseRepoParams(url);
+        const sortParam = url.searchParams.get('sort');
+        const sort = sortParam === 'recent' || sortParam === 'size' ? sortParam : undefined;
+        const minSizeValue = url.searchParams.get('minSize');
+        const limitValue = url.searchParams.get('limit');
+        const search = url.searchParams.get('search') ?? undefined;
+        sendJson(
+          res,
+          200,
+          service.listClusterSummaries({
+            ...params,
+            minSize: minSizeValue ? Number(minSizeValue) : undefined,
+            limit: limitValue ? Number(limitValue) : undefined,
+            sort,
+            search,
+          }),
+        );
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === '/cluster-detail') {
+        const params = parseRepoParams(url);
+        const clusterIdValue = url.searchParams.get('clusterId');
+        if (!clusterIdValue) {
+          sendJson(res, 400, { error: 'Missing clusterId parameter' });
+          return;
+        }
+        const clusterId = Number(clusterIdValue);
+        if (!Number.isInteger(clusterId) || clusterId <= 0) {
+          sendJson(res, 400, { error: 'Invalid clusterId parameter' });
+          return;
+        }
+        const memberLimitValue = url.searchParams.get('memberLimit');
+        const bodyCharsValue = url.searchParams.get('bodyChars');
+        sendJson(
+          res,
+          200,
+          service.getClusterDetailDump({
+            ...params,
+            clusterId,
+            memberLimit: memberLimitValue ? Number(memberLimitValue) : undefined,
+            bodyChars: bodyCharsValue ? Number(bodyCharsValue) : undefined,
+          }),
+        );
+        return;
+      }
+
       if (req.method === 'POST' && url.pathname === '/actions/rerun') {
         const body = actionRequestSchema.parse(await readBody(req));
         sendJson(res, 200, await service.rerunAction(body));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/actions/refresh') {
+        const body = refreshRequestSchema.parse(await readBody(req));
+        sendJson(res, 200, await service.refreshRepository(body));
         return;
       }
 

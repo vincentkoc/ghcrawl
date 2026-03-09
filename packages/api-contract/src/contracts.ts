@@ -111,6 +111,104 @@ export const clustersResponseSchema = z.object({
 });
 export type ClustersResponse = z.infer<typeof clustersResponseSchema>;
 
+export const repoStatsSchema = z.object({
+  openIssueCount: z.number().int().nonnegative(),
+  openPullRequestCount: z.number().int().nonnegative(),
+  lastGithubReconciliationAt: z.string().nullable(),
+  lastEmbedRefreshAt: z.string().nullable(),
+  staleEmbedThreadCount: z.number().int().nonnegative(),
+  staleEmbedSourceCount: z.number().int().nonnegative(),
+  latestClusterRunId: z.number().int().positive().nullable(),
+  latestClusterRunFinishedAt: z.string().nullable(),
+});
+export type RepoStatsDto = z.infer<typeof repoStatsSchema>;
+
+export const clusterSummarySchema = z.object({
+  clusterId: z.number().int().positive(),
+  displayTitle: z.string(),
+  totalCount: z.number().int().nonnegative(),
+  issueCount: z.number().int().nonnegative(),
+  pullRequestCount: z.number().int().nonnegative(),
+  latestUpdatedAt: z.string().nullable(),
+  representativeThreadId: z.number().int().positive().nullable(),
+  representativeNumber: z.number().int().positive().nullable(),
+  representativeKind: threadKindSchema.nullable(),
+});
+export type ClusterSummaryDto = z.infer<typeof clusterSummarySchema>;
+
+export const clusterSummariesResponseSchema = z.object({
+  repository: repositorySchema,
+  stats: repoStatsSchema,
+  clusters: z.array(clusterSummarySchema),
+});
+export type ClusterSummariesResponse = z.infer<typeof clusterSummariesResponseSchema>;
+
+export const threadSummariesSchema = z.object({
+  problem_summary: z.string().optional(),
+  solution_summary: z.string().optional(),
+  maintainer_signal_summary: z.string().optional(),
+  dedupe_summary: z.string().optional(),
+});
+export type ThreadSummariesDto = z.infer<typeof threadSummariesSchema>;
+
+export const clusterThreadDumpSchema = z.object({
+  thread: threadSchema,
+  bodySnippet: z.string().nullable(),
+  summaries: threadSummariesSchema,
+});
+export type ClusterThreadDumpDto = z.infer<typeof clusterThreadDumpSchema>;
+
+export const clusterDetailResponseSchema = z.object({
+  repository: repositorySchema,
+  stats: repoStatsSchema,
+  cluster: clusterSummarySchema,
+  members: z.array(clusterThreadDumpSchema),
+});
+export type ClusterDetailResponse = z.infer<typeof clusterDetailResponseSchema>;
+
+export const syncResultSchema = z.object({
+  runId: z.number().int().positive(),
+  threadsSynced: z.number().int().nonnegative(),
+  commentsSynced: z.number().int().nonnegative(),
+  threadsClosed: z.number().int().nonnegative(),
+});
+export type SyncResultDto = z.infer<typeof syncResultSchema>;
+
+export const embedResultSchema = z.object({
+  runId: z.number().int().positive(),
+  embedded: z.number().int().nonnegative(),
+});
+export type EmbedResultDto = z.infer<typeof embedResultSchema>;
+
+export const clusterResultSchema = z.object({
+  runId: z.number().int().positive(),
+  edges: z.number().int().nonnegative(),
+  clusters: z.number().int().nonnegative(),
+});
+export type ClusterResultDto = z.infer<typeof clusterResultSchema>;
+
+export const refreshRequestSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  sync: z.boolean().optional(),
+  embed: z.boolean().optional(),
+  cluster: z.boolean().optional(),
+});
+export type RefreshRequest = z.infer<typeof refreshRequestSchema>;
+
+export const refreshResponseSchema = z.object({
+  repository: repositorySchema,
+  selected: z.object({
+    sync: z.boolean(),
+    embed: z.boolean(),
+    cluster: z.boolean(),
+  }),
+  sync: syncResultSchema.nullable(),
+  embed: embedResultSchema.nullable(),
+  cluster: clusterResultSchema.nullable(),
+});
+export type RefreshResponse = z.infer<typeof refreshResponseSchema>;
+
 export const rerunActionSchema = z.enum(['summarize', 'embed', 'cluster']);
 export type RerunAction = z.infer<typeof rerunActionSchema>;
 

@@ -10,10 +10,13 @@ type CommandName =
   | 'init'
   | 'doctor'
   | 'sync'
+  | 'refresh'
   | 'summarize'
   | 'purge-comments'
   | 'embed'
   | 'cluster'
+  | 'clusters'
+  | 'cluster-detail'
   | 'search'
   | 'neighbors'
   | 'tui'
@@ -29,8 +32,11 @@ function usage(devMode = false): string {
     '  init [--reconfigure]',
     '  doctor',
     '  sync <owner/repo> [--since <iso|duration>] [--limit <count>] [--include-comments]',
+    '  refresh <owner/repo> [--no-sync] [--no-embed] [--no-cluster]',
     '  embed <owner/repo> [--number <thread>]',
     '  cluster <owner/repo> [--k <count>] [--threshold <score>]',
+    '  clusters <owner/repo> [--min-size <count>] [--limit <count>] [--sort recent|size] [--search <text>]',
+    '  cluster-detail <owner/repo> --id <cluster-id> [--member-limit <count>] [--body-chars <count>]',
     '  search <owner/repo> --query <text> [--mode keyword|semantic|hybrid]',
     '  neighbors <owner/repo> --number <thread> [--limit <count>] [--threshold <score>]',
     '  tui [owner/repo]',
@@ -80,6 +86,15 @@ export function parseRepoFlags(args: string[]): { owner: string; repo: string; v
       k: { type: 'string' },
       threshold: { type: 'string' },
       port: { type: 'string' },
+      id: { type: 'string' },
+      sort: { type: 'string' },
+      search: { type: 'string' },
+      'min-size': { type: 'string' },
+      'member-limit': { type: 'string' },
+      'body-chars': { type: 'string' },
+      'no-sync': { type: 'boolean' },
+      'no-embed': { type: 'boolean' },
+      'no-cluster': { type: 'boolean' },
     },
   });
 
@@ -157,6 +172,14 @@ function writeProgress(message: string): void {
 
 function formatBooleanStatus(value: boolean): string {
   return value ? 'yes' : 'no';
+}
+
+function parsePositiveInteger(name: string, value: string): number {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name}: ${value}`);
+  }
+  return parsed;
 }
 
 export function formatDoctorReport(result: DoctorResult): string {
@@ -251,6 +274,19 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
         stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         return;
       }
+      case 'refresh': {
+        const { owner, repo, values } = parseRepoFlags(rest);
+        const result = await getService().refreshRepository({
+          owner,
+          repo,
+          sync: values['no-sync'] === true ? false : undefined,
+          embed: values['no-embed'] === true ? false : undefined,
+          cluster: values['no-cluster'] === true ? false : undefined,
+          onProgress: writeProgress,
+        });
+        stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
       case 'summarize': {
         const { owner, repo, values } = parseRepoFlags(rest);
         const result = await getService().summarizeRepository({
@@ -293,6 +329,41 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
           k: typeof values.k === 'string' ? Number(values.k) : undefined,
           minScore: typeof values.threshold === 'string' ? Number(values.threshold) : undefined,
           onProgress: writeProgress,
+        });
+        stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+      case 'clusters': {
+        const { owner, repo, values } = parseRepoFlags(rest);
+        const sort = values.sort === 'recent' || values.sort === 'size' ? values.sort : undefined;
+        const result = getService().listClusterSummaries({
+          owner,
+          repo,
+          minSize: typeof values['min-size'] === 'string' ? parsePositiveInteger('min-size', values['min-size']) : undefined,
+          limit: typeof values.limit === 'string' ? parsePositiveInteger('limit', values.limit) : undefined,
+          sort,
+          search: typeof values.search === 'string' ? values.search : undefined,
+        });
+        stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+      case 'cluster-detail': {
+        const { owner, repo, values } = parseRepoFlags(rest);
+        if (typeof values.id !== 'string') {
+          throw new Error('Missing --id');
+        }
+        const result = getService().getClusterDetailDump({
+          owner,
+          repo,
+          clusterId: parsePositiveInteger('id', values.id),
+          memberLimit:
+            typeof values['member-limit'] === 'string'
+              ? parsePositiveInteger('member-limit', values['member-limit'])
+              : undefined,
+          bodyChars:
+            typeof values['body-chars'] === 'string'
+              ? parsePositiveInteger('body-chars', values['body-chars'])
+              : undefined,
         });
         stdout.write(`${JSON.stringify(result, null, 2)}\n`);
         return;

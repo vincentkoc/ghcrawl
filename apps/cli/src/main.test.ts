@@ -17,6 +17,9 @@ test('run prints usage with no command', async () => {
 
   await run([], stdout);
   assert.match(output, /gitcrawl <command>/);
+  assert.match(output, /refresh <owner\/repo>/);
+  assert.match(output, /clusters <owner\/repo>/);
+  assert.match(output, /cluster-detail <owner\/repo>/);
   assert.match(output, /tui \[owner\/repo\]/);
   assert.doesNotMatch(output, /summarize <owner\/repo>/);
 });
@@ -32,6 +35,7 @@ test('run prints usage for help flag', async () => {
 
   await run(['--help'], stdout);
   assert.match(output, /gitcrawl <command>/);
+  assert.match(output, /refresh <owner\/repo>/);
   assert.match(output, /tui \[owner\/repo\]/);
   assert.doesNotMatch(output, /summarize <owner\/repo>/);
 });

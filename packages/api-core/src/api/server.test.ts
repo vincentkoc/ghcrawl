@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { healthResponseSchema, neighborsResponseSchema } from '@gitcrawl/api-contract';
+import { clusterDetailResponseSchema, clusterSummariesResponseSchema, healthResponseSchema, neighborsResponseSchema } from '@gitcrawl/api-contract';
 
 import { createApiServer } from './server.js';
 import { GitcrawlService } from '../service.js';
@@ -196,6 +196,99 @@ test('server returns 400 for malformed request inputs', async () => {
       body: '{"owner":"openclaw"',
     });
     assert.equal(badJson.status, 400);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    service.close();
+  }
+});
+
+test('cluster summary and detail endpoints return contract payloads', async () => {
+  const service = new GitcrawlService({
+    config: {
+      workspaceRoot: process.cwd(),
+      configDir: '/tmp/gitcrawl-test',
+      configPath: '/tmp/gitcrawl-test/config.json',
+      configFileExists: true,
+      dbPath: ':memory:',
+      dbPathSource: 'config',
+      apiPort: 5179,
+      secretProvider: 'plaintext',
+      githubTokenSource: 'none',
+      openaiApiKeySource: 'none',
+      summaryModel: 'gpt-5-mini',
+      embedModel: 'text-embedding-3-large',
+      embedBatchSize: 8,
+      embedConcurrency: 10,
+      embedMaxUnread: 20,
+      openSearchIndex: 'gitcrawl-threads',
+      tuiPreferences: {},
+    },
+    github: {
+      checkAuth: async () => undefined,
+      getRepo: async () => ({}),
+      listRepositoryIssues: async () => [],
+      getIssue: async () => ({}),
+      getPull: async () => ({}),
+      listIssueComments: async () => [],
+      listPullReviews: async () => [],
+      listPullReviewComments: async () => [],
+    },
+  });
+
+  const now = '2026-03-09T00:00:00Z';
+  service.db
+    .prepare(
+      `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+  service.db
+    .prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(10, 1, '100', 42, 'issue', 'open', 'Downloader hangs', 'The transfer never finishes.', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, now, null, null, now, now, now);
+  service.db
+    .prepare(
+      `insert into cluster_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(1, 1, 'openclaw/openclaw', 'completed', now, now);
+  service.db
+    .prepare(
+      `insert into clusters (id, repo_id, cluster_run_id, representative_thread_id, member_count, created_at)
+       values (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(100, 1, 1, 10, 1, now);
+  service.db
+    .prepare(
+      `insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at)
+       values (?, ?, ?, ?)`,
+    )
+    .run(100, 10, null, now);
+
+  const server = createApiServer(service);
+  try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert(address && typeof address === 'object');
+
+    const summariesResponse = await fetch(
+      `http://127.0.0.1:${address.port}/cluster-summaries?owner=openclaw&repo=openclaw&minSize=0`,
+    );
+    assert.equal(summariesResponse.status, 200);
+    const summaries = clusterSummariesResponseSchema.parse((await summariesResponse.json()) as unknown);
+    assert.equal(summaries.clusters[0]?.clusterId, 100);
+
+    const detailResponse = await fetch(
+      `http://127.0.0.1:${address.port}/cluster-detail?owner=openclaw&repo=openclaw&clusterId=100&bodyChars=20`,
+    );
+    assert.equal(detailResponse.status, 200);
+    const detail = clusterDetailResponseSchema.parse((await detailResponse.json()) as unknown);
+    assert.equal(detail.cluster.clusterId, 100);
+    assert.equal(detail.members[0]?.thread.number, 42);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     service.close();

@@ -320,7 +320,6 @@ function createWidgets(owner: string, repo: string): Widgets {
     border: 'line',
     label: ' Clusters ',
     tags: false,
-    mouse: true,
     keys: false,
     style: {
       border: { fg: '#5bc0eb' },
@@ -334,7 +333,6 @@ function createWidgets(owner: string, repo: string): Widgets {
     border: 'line',
     label: ' Members ',
     tags: false,
-    mouse: true,
     keys: false,
     style: {
       border: { fg: '#9bc53d' },
@@ -351,7 +349,6 @@ function createWidgets(owner: string, repo: string): Widgets {
     scrollable: true,
     alwaysScroll: true,
     keys: false,
-    mouse: true,
     scrollbar: { ch: ' ' },
     style: {
       border: { fg: '#fde74c' },

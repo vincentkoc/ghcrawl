@@ -18,6 +18,7 @@ test('migrate creates core tables', () => {
     assert.ok(names.includes('documents'));
     assert.ok(names.includes('document_embeddings'));
     assert.ok(names.includes('cluster_runs'));
+    assert.ok(names.includes('repo_sync_state'));
 
     const threadColumns = db.prepare('pragma table_info(threads)').all() as Array<{ name: string }>;
     const threadColumnNames = threadColumns.map((column) => column.name);

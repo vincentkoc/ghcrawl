@@ -569,7 +569,16 @@ export class GitcrawlService {
             onProgress: params.onProgress,
           })
         : 0;
-      const reconciledOpenCloseAt = shouldReconcileMissingOpenThreads ? nowIso() : null;
+      const finishedAt = nowIso();
+      const reconciledOpenCloseAt = shouldReconcileMissingOpenThreads ? finishedAt : null;
+      const nextSyncCursor: SyncCursorState = {
+        lastFullOpenScanStartedAt: isFullOpenScan ? crawlStartedAt : syncCursor.lastFullOpenScanStartedAt,
+        lastOverlappingOpenScanCompletedAt: isOverlappingOpenScan ? finishedAt : syncCursor.lastOverlappingOpenScanCompletedAt,
+        lastNonOverlappingScanCompletedAt:
+          !isFullOpenScan && !isOverlappingOpenScan ? finishedAt : syncCursor.lastNonOverlappingScanCompletedAt,
+        lastReconciledOpenCloseAt: reconciledOpenCloseAt ?? syncCursor.lastReconciledOpenCloseAt,
+      };
+      this.writeSyncCursorState(repoId, nextSyncCursor);
 
       this.finishRun('sync_runs', runId, 'completed', {
         threadsSynced,
@@ -584,7 +593,7 @@ export class GitcrawlService {
         isOverlappingOpenScan,
         overlapReferenceAt,
         reconciledOpenCloseAt,
-      } satisfies SyncRunStats);
+      } satisfies SyncRunStats, undefined, finishedAt);
       return { runId, threadsSynced, commentsSynced, threadsClosed };
     } catch (error) {
       this.finishRun('sync_runs', runId, 'failed', null, error);
@@ -1309,6 +1318,33 @@ export class GitcrawlService {
   }
 
   private getSyncCursorState(repoId: number): SyncCursorState {
+    const persisted = (this.db
+      .prepare(
+        `select
+            last_full_open_scan_started_at,
+            last_overlapping_open_scan_completed_at,
+            last_non_overlapping_scan_completed_at,
+            last_open_close_reconciled_at
+         from repo_sync_state
+         where repo_id = ?`,
+      )
+      .get(repoId) as
+      | {
+          last_full_open_scan_started_at: string | null;
+          last_overlapping_open_scan_completed_at: string | null;
+          last_non_overlapping_scan_completed_at: string | null;
+          last_open_close_reconciled_at: string | null;
+        }
+      | undefined) ?? null;
+    if (persisted) {
+      return {
+        lastFullOpenScanStartedAt: persisted.last_full_open_scan_started_at,
+        lastOverlappingOpenScanCompletedAt: persisted.last_overlapping_open_scan_completed_at,
+        lastNonOverlappingScanCompletedAt: persisted.last_non_overlapping_scan_completed_at,
+        lastReconciledOpenCloseAt: persisted.last_open_close_reconciled_at,
+      };
+    }
+
     const rows = this.db
       .prepare("select finished_at, stats_json from sync_runs where repo_id = ? and status = 'completed' order by id desc")
       .all(repoId) as Array<{ finished_at: string | null; stats_json: string | null }>;
@@ -1336,7 +1372,44 @@ export class GitcrawlService {
       }
     }
 
+    if (
+      state.lastFullOpenScanStartedAt !== null ||
+      state.lastOverlappingOpenScanCompletedAt !== null ||
+      state.lastNonOverlappingScanCompletedAt !== null ||
+      state.lastReconciledOpenCloseAt !== null
+    ) {
+      this.writeSyncCursorState(repoId, state);
+    }
+
     return state;
+  }
+
+  private writeSyncCursorState(repoId: number, state: SyncCursorState): void {
+    this.db
+      .prepare(
+        `insert into repo_sync_state (
+            repo_id,
+            last_full_open_scan_started_at,
+            last_overlapping_open_scan_completed_at,
+            last_non_overlapping_scan_completed_at,
+            last_open_close_reconciled_at,
+            updated_at
+         ) values (?, ?, ?, ?, ?, ?)
+         on conflict(repo_id) do update set
+           last_full_open_scan_started_at = excluded.last_full_open_scan_started_at,
+           last_overlapping_open_scan_completed_at = excluded.last_overlapping_open_scan_completed_at,
+           last_non_overlapping_scan_completed_at = excluded.last_non_overlapping_scan_completed_at,
+           last_open_close_reconciled_at = excluded.last_open_close_reconciled_at,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        repoId,
+        state.lastFullOpenScanStartedAt,
+        state.lastOverlappingOpenScanCompletedAt,
+        state.lastNonOverlappingScanCompletedAt,
+        state.lastReconciledOpenCloseAt,
+        nowIso(),
+      );
   }
 
   private getTuiRepoStats(repoId: number): TuiRepoStats {
@@ -2193,12 +2266,19 @@ export class GitcrawlService {
     return Number(result.lastInsertRowid);
   }
 
-  private finishRun(table: RunTable, runId: number, status: 'completed' | 'failed', stats?: unknown, error?: unknown): void {
+  private finishRun(
+    table: RunTable,
+    runId: number,
+    status: 'completed' | 'failed',
+    stats?: unknown,
+    error?: unknown,
+    finishedAt = nowIso(),
+  ): void {
     this.db
       .prepare(`update ${table} set status = ?, finished_at = ?, stats_json = ?, error_text = ? where id = ?`)
       .run(
         status,
-        nowIso(),
+        finishedAt,
         stats === undefined ? null : asJson(stats),
         error instanceof Error ? error.message : error ? String(error) : null,
         runId,

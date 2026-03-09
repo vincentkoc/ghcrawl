@@ -1598,9 +1598,25 @@ test('syncRepository derives the default overlapping since window from the last 
     assert.equal(sinceValues[0], undefined);
     assert.equal(sinceValues[1], '2026-03-09T12:13:01.000Z');
 
-    const rows = service.db
-      .prepare("select stats_json from sync_runs where status = 'completed' order by id asc")
-      .all() as Array<{ stats_json: string | null }>;
+    const syncState = service.db
+      .prepare(
+        `select
+            last_full_open_scan_started_at,
+            last_overlapping_open_scan_completed_at,
+            last_non_overlapping_scan_completed_at,
+            last_open_close_reconciled_at
+         from repo_sync_state`,
+      )
+      .get() as {
+      last_full_open_scan_started_at: string | null;
+      last_overlapping_open_scan_completed_at: string | null;
+      last_non_overlapping_scan_completed_at: string | null;
+      last_open_close_reconciled_at: string | null;
+    };
+
+    const rows = service.db.prepare("select stats_json from sync_runs where status = 'completed' order by id asc").all() as Array<{
+      stats_json: string | null;
+    }>;
     const firstStats = JSON.parse(rows[0]?.stats_json ?? '{}') as Record<string, unknown>;
     const secondStats = JSON.parse(rows[1]?.stats_json ?? '{}') as Record<string, unknown>;
 
@@ -1608,6 +1624,10 @@ test('syncRepository derives the default overlapping since window from the last 
     assert.equal(firstStats.effectiveSince, null);
     assert.equal(secondStats.isOverlappingOpenScan, true);
     assert.equal(secondStats.effectiveSince, '2026-03-09T12:13:01.000Z');
+    assert.equal(syncState.last_full_open_scan_started_at, '2026-03-09T13:13:00.000Z');
+    assert.match(syncState.last_overlapping_open_scan_completed_at ?? '', /^2026-03-09T/);
+    assert.equal(syncState.last_non_overlapping_scan_completed_at, null);
+    assert.match(syncState.last_open_close_reconciled_at ?? '', /^2026-03-09T/);
   } finally {
     service.close();
   }

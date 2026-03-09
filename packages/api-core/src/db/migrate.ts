@@ -137,6 +137,16 @@ const migrationStatements = [
   )
   `,
   `
+  create table if not exists repo_sync_state (
+    repo_id integer primary key references repositories(id) on delete cascade,
+    last_full_open_scan_started_at text,
+    last_overlapping_open_scan_completed_at text,
+    last_non_overlapping_scan_completed_at text,
+    last_open_close_reconciled_at text,
+    updated_at text not null
+  )
+  `,
+  `
   create table if not exists summary_runs (
     id integer primary key,
     repo_id integer references repositories(id) on delete cascade,

@@ -26,6 +26,12 @@ importers:
       '@gitcrawl/api-core':
         specifier: workspace:*
         version: link:../../packages/api-core
+      '@types/blessed':
+        specifier: ^0.1.27
+        version: 0.1.27
+      neo-blessed:
+        specifier: ^0.2.0
+        version: 0.2.0
 
   apps/web:
     dependencies:
@@ -345,6 +351,9 @@ packages:
   '@types/better-sqlite3@7.6.13':
     resolution: {integrity: sha512-NMv9ASNARoKksWtsq/SHakpYAYnhBrQgGD8zkLYk/jaK8jUGn08CfEdTRgYhMypUQAfzSP8W6gNLe0q19/t4VA==}
 
+  '@types/blessed@0.1.27':
+    resolution: {integrity: sha512-ZOQGjLvWDclAXp0rW5iuUBXeD6Gr1PkitN7tj7/G8FCoSzTsij6OhXusOzMKhwrZ9YlL2Pmu0d6xJ9zVvk+Hsg==}
+
   '@types/node@24.12.0':
     resolution: {integrity: sha512-GYDxsZi3ChgmckRT9HPU0WEhKLP08ev/Yfcq2AstjrDASOYCSXeyjDsHg4v5t4jOj7cyDX3vmprafKlWIG9MXQ==}
 
@@ -457,6 +466,11 @@ packages:
 
   napi-build-utils@2.0.0:
     resolution: {integrity: sha512-GEbrYkbfF7MoNaoh2iGG84Mnf/WZfB0GdGEsM8wz7Expx/LlWf5U8t9nvJKXSp3qr5IsEbK04cBGhol/KwOsWA==}
+
+  neo-blessed@0.2.0:
+    resolution: {integrity: sha512-C2kC4K+G2QnNQFXUIxTQvqmrdSIzGTX1ZRKeDW6ChmvPRw8rTkTEJzbEQHiHy06d36PCl/yMOCjquCRV8SpSQw==}
+    engines: {node: '>= 8.0.0'}
+    hasBin: true
 
   node-abi@3.87.0:
     resolution: {integrity: sha512-+CGM1L1CgmtheLcBuleyYOn7NWPVu0s0EJH2C4puxgEZb9h8QpR9G2dBfZJOAUhi7VQxuBPMd0hiISWcTyiYyQ==}
@@ -802,6 +816,10 @@ snapshots:
     dependencies:
       '@types/node': 24.12.0
 
+  '@types/blessed@0.1.27':
+    dependencies:
+      '@types/node': 24.12.0
+
   '@types/node@24.12.0':
     dependencies:
       undici-types: 7.16.0
@@ -918,6 +936,8 @@ snapshots:
   mkdirp-classic@0.5.3: {}
 
   napi-build-utils@2.0.0: {}
+
+  neo-blessed@0.2.0: {}
 
   node-abi@3.87.0:
     dependencies:

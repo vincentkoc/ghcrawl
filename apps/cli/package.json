@@ -12,6 +12,8 @@
     "test": "tsx --test src/*.test.ts src/**/*.test.ts"
   },
   "dependencies": {
-    "@gitcrawl/api-core": "workspace:*"
+    "@gitcrawl/api-core": "workspace:*",
+    "@types/blessed": "^0.1.27",
+    "neo-blessed": "^0.2.0"
   }
 }

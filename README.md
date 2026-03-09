@@ -32,6 +32,7 @@ pnpm --filter @gitcrawl/cli cli embed openclaw/openclaw
 pnpm --filter @gitcrawl/cli cli cluster openclaw/openclaw
 pnpm --filter @gitcrawl/cli cli neighbors openclaw/openclaw --number 42 --limit 10
 pnpm --filter @gitcrawl/cli cli search openclaw/openclaw --query "download stalls"
+pnpm --filter @gitcrawl/cli cli tui openclaw/openclaw
 pnpm --filter @gitcrawl/cli cli serve
 ```
 
@@ -78,5 +79,7 @@ Supported variables:
 - `sync --limit <count>` is the best smoke-test path on a busy repository.
 - `summarize`, `embed`, and `cluster` now print timestamped progress lines to stderr during long runs.
 - `neighbors` shows exact local nearest neighbors for one embedded thread and is useful for inspecting vector quality before clustering.
+- `tui` opens the local full-screen cluster browser with cluster list, member list, and thread detail panes.
+- `tui` defaults to showing clusters of size `10+`; use `f` inside the TUI to cycle `10`, `20`, `50`, and `all`.
 - sync now pauses between 100-thread batches and uses stronger rate-limit backoff, but a long crawl can still hit GitHub limits.
 - For a first pass on a large repository, prefer `sync --since <iso-timestamp>` before doing a full backfill.

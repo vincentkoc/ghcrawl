@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { parseArgs } from 'node:util';
 
 import { createApiServer, GitcrawlService } from '@gitcrawl/api-core';
+import { startTui } from './tui/app.js';
 
 type CommandName =
   | 'init'
@@ -14,6 +15,7 @@ type CommandName =
   | 'cluster'
   | 'search'
   | 'neighbors'
+  | 'tui'
   | 'serve';
 
 function usage(): string {
@@ -29,6 +31,7 @@ Commands:
   cluster <owner/repo> [--k <count>] [--threshold <score>]
   search <owner/repo> --query <text> [--mode keyword|semantic|hybrid]
   neighbors <owner/repo> --number <thread> [--limit <count>] [--threshold <score>]
+  tui <owner/repo>
   serve
 `;
 }
@@ -136,7 +139,7 @@ function writeProgress(message: string): void {
 export async function run(argv: string[], stdout: NodeJS.WritableStream = process.stdout): Promise<void> {
   const [commandRaw, ...rest] = argv;
   const command = commandRaw as CommandName | undefined;
-  if (!command) {
+  if (!command || commandRaw === '--help' || commandRaw === '-h' || commandRaw === 'help') {
     stdout.write(usage());
     return;
   }
@@ -242,6 +245,11 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
           minScore: typeof values.threshold === 'string' ? Number(values.threshold) : undefined,
         });
         stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+        return;
+      }
+      case 'tui': {
+        const { owner, repo } = parseRepoFlags(rest);
+        await startTui({ service, owner, repo });
         return;
       }
       case 'serve': {

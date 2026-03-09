@@ -1,0 +1,399 @@
+import { spawn } from 'node:child_process';
+
+import blessed from 'neo-blessed';
+
+import type {
+  GitcrawlService,
+  TuiClusterDetail,
+  TuiClusterSortMode,
+  TuiSnapshot,
+  TuiThreadDetail,
+} from '@gitcrawl/api-core';
+import {
+  buildMemberRows,
+  cycleFocusPane,
+  cycleMinSizeFilter,
+  cycleSortMode,
+  findSelectableIndex,
+  moveSelectableIndex,
+  preserveSelectedId,
+  selectedThreadIdFromRow,
+  type MemberListRow,
+  type TuiFocusPane,
+  type TuiMinSizeFilter,
+} from './state.js';
+import { computeTuiLayout } from './layout.js';
+
+type StartTuiParams = {
+  service: GitcrawlService;
+  owner: string;
+  repo: string;
+};
+
+type Widgets = {
+  screen: blessed.Widgets.Screen;
+  header: blessed.Widgets.BoxElement;
+  clusters: blessed.Widgets.ListElement;
+  members: blessed.Widgets.ListElement;
+  detail: blessed.Widgets.BoxElement;
+  footer: blessed.Widgets.BoxElement;
+};
+
+export async function startTui(params: StartTuiParams): Promise<void> {
+  const widgets = createWidgets(params.owner, params.repo);
+
+  let focusPane: TuiFocusPane = 'clusters';
+  let sortMode: TuiClusterSortMode = 'recent';
+  let minSize: TuiMinSizeFilter = 10;
+  let search = '';
+  let snapshot: TuiSnapshot | null = null;
+  let clusterDetail: TuiClusterDetail | null = null;
+  let threadDetail: TuiThreadDetail | null = null;
+  let selectedClusterId: number | null = null;
+  let selectedMemberThreadId: number | null = null;
+  let memberRows: MemberListRow[] = [];
+  let memberIndex = -1;
+  let status = 'Ready';
+
+  const refreshAll = (preserveSelection: boolean): void => {
+    const previousClusterId = preserveSelection ? selectedClusterId : null;
+    const previousMemberId = preserveSelection ? selectedMemberThreadId : null;
+    snapshot = params.service.getTuiSnapshot({
+      owner: params.owner,
+      repo: params.repo,
+      minSize,
+      sort: sortMode,
+      search,
+    });
+    selectedClusterId = preserveSelectedId(snapshot.clusters.map((cluster) => cluster.clusterId), previousClusterId);
+
+    if (selectedClusterId !== null) {
+      clusterDetail = params.service.getTuiClusterDetail({
+        owner: params.owner,
+        repo: params.repo,
+        clusterId: selectedClusterId,
+      });
+      memberRows = buildMemberRows(clusterDetail);
+      selectedMemberThreadId = preserveSelectedId(
+        memberRows.filter((row) => row.selectable).map((row) => row.threadId),
+        previousMemberId,
+      );
+      memberIndex = findSelectableIndex(memberRows, selectedMemberThreadId);
+      threadDetail =
+        selectedMemberThreadId !== null
+          ? params.service.getTuiThreadDetail({
+              owner: params.owner,
+              repo: params.repo,
+              threadId: selectedMemberThreadId,
+            })
+          : null;
+    } else {
+      clusterDetail = null;
+      memberRows = [];
+      selectedMemberThreadId = null;
+      memberIndex = -1;
+      threadDetail = null;
+    }
+
+    status = `Loaded ${snapshot.clusters.length} cluster(s)`;
+    render();
+  };
+
+  const updateFocus = (nextFocus: TuiFocusPane): void => {
+    focusPane = nextFocus;
+    if (focusPane === 'clusters') widgets.clusters.focus();
+    if (focusPane === 'members') widgets.members.focus();
+    if (focusPane === 'detail') widgets.detail.focus();
+    render();
+  };
+
+  const render = (): void => {
+    const width = widgets.screen.width as number;
+    const height = widgets.screen.height as number;
+    const layout = computeTuiLayout(width, height);
+    applyRect(widgets.header, layout.header);
+    applyRect(widgets.clusters, layout.clusters);
+    applyRect(widgets.members, layout.members);
+    applyRect(widgets.detail, layout.detail);
+    applyRect(widgets.footer, layout.footer);
+
+    const repoLabel = snapshot?.repository.fullName ?? `${params.owner}/${params.repo}`;
+    widgets.header.setContent(
+      `{bold}${repoLabel}{/bold}  {cyan-fg}${snapshot?.stats.openPullRequestCount ?? 0} PR{/cyan-fg}  {green-fg}${snapshot?.stats.openIssueCount ?? 0} issues{/green-fg}  run ${snapshot?.stats.latestClusterRunId ?? '-'}  ${snapshot?.stats.latestClusterRunFinishedAt ?? 'no cluster run'}  sort:${sortMode}  min:${minSize === 0 ? 'all' : `${minSize}+`}  filter:${search || 'none'}`,
+    );
+
+    const clusterItems =
+      snapshot?.clusters.map((cluster) => {
+        const updated = cluster.latestUpdatedAt ? cluster.latestUpdatedAt.slice(5, 16).replace('T', ' ') : 'unknown';
+        return `${String(cluster.totalCount).padStart(3, ' ')}  ${String(cluster.pullRequestCount).padStart(2, ' ')}P/${String(cluster.issueCount).padStart(2, ' ')}I  ${updated}  ${cluster.displayTitle}`;
+      }) ?? ['No clusters'];
+    widgets.clusters.setItems(clusterItems);
+    const clusterIndex =
+      snapshot && selectedClusterId !== null ? Math.max(0, snapshot.clusters.findIndex((cluster) => cluster.clusterId === selectedClusterId)) : 0;
+    widgets.clusters.select(clusterIndex);
+
+    widgets.members.setItems(memberRows.length > 0 ? memberRows.map((row) => row.label) : ['No members']);
+    if (memberIndex >= 0) {
+      widgets.members.select(memberIndex);
+    }
+
+    widgets.detail.setContent(renderDetailPane(threadDetail, clusterDetail));
+    updatePaneStyles(widgets, focusPane);
+    widgets.footer.setContent(
+      `${status}  |  Tab focus  j/k move  Enter drill  s sort  f min  / filter  r refresh  o open  q quit`,
+    );
+    widgets.screen.render();
+  };
+
+  const moveSelection = (delta: -1 | 1): void => {
+    if (!snapshot) return;
+    if (focusPane === 'clusters') {
+      if (snapshot.clusters.length === 0) return;
+      const currentIndex = Math.max(
+        0,
+        snapshot.clusters.findIndex((cluster) => cluster.clusterId === selectedClusterId),
+      );
+      const nextIndex = (currentIndex + delta + snapshot.clusters.length) % snapshot.clusters.length;
+      selectedClusterId = snapshot.clusters[nextIndex]?.clusterId ?? null;
+      if (selectedClusterId !== null) {
+        clusterDetail = params.service.getTuiClusterDetail({
+          owner: params.owner,
+          repo: params.repo,
+          clusterId: selectedClusterId,
+        });
+        memberRows = buildMemberRows(clusterDetail);
+        selectedMemberThreadId = preserveSelectedId(
+          memberRows.filter((row) => row.selectable).map((row) => row.threadId),
+          null,
+        );
+        memberIndex = findSelectableIndex(memberRows, selectedMemberThreadId);
+        threadDetail =
+          selectedMemberThreadId !== null
+            ? params.service.getTuiThreadDetail({
+                owner: params.owner,
+                repo: params.repo,
+                threadId: selectedMemberThreadId,
+              })
+            : null;
+      }
+      status = `Cluster ${nextIndex + 1}/${snapshot.clusters.length}`;
+      render();
+      return;
+    }
+
+    if (focusPane === 'members') {
+      if (memberRows.length === 0) return;
+      memberIndex = moveSelectableIndex(memberRows, memberIndex < 0 ? 0 : memberIndex, delta);
+      selectedMemberThreadId = selectedThreadIdFromRow(memberRows, memberIndex);
+      threadDetail =
+        selectedMemberThreadId !== null
+          ? params.service.getTuiThreadDetail({
+              owner: params.owner,
+              repo: params.repo,
+              threadId: selectedMemberThreadId,
+            })
+          : null;
+      status = selectedMemberThreadId !== null ? `Selected #${threadDetail?.thread.number ?? '?'}` : 'No selectable member';
+      render();
+    }
+  };
+
+  const promptFilter = (): void => {
+    const prompt = blessed.prompt({
+      parent: widgets.screen,
+      border: 'line',
+      height: 7,
+      width: '60%',
+      top: 'center',
+      left: 'center',
+      label: ' Cluster Filter ',
+      tags: true,
+      keys: true,
+      vi: true,
+      style: {
+        border: { fg: 'cyan' },
+        bg: '#101522',
+      },
+    });
+    prompt.input('Filter clusters', search, (_error, value) => {
+      search = (value ?? '').trim();
+      status = search ? `Filter: ${search}` : 'Filter cleared';
+      refreshAll(false);
+      prompt.destroy();
+      updateFocus('clusters');
+    });
+  };
+
+  const openSelectedThread = (): void => {
+    const url = threadDetail?.thread.htmlUrl;
+    if (!url) {
+      status = 'No thread selected to open';
+      render();
+      return;
+    }
+    openUrl(url);
+    status = `Opened ${url}`;
+    render();
+  };
+
+  widgets.screen.key(['q', 'C-c'], () => {
+    widgets.screen.destroy();
+  });
+  widgets.screen.key(['tab'], () => updateFocus(cycleFocusPane(focusPane, 1)));
+  widgets.screen.key(['S-tab'], () => updateFocus(cycleFocusPane(focusPane, -1)));
+  widgets.screen.key(['j', 'down'], () => moveSelection(1));
+  widgets.screen.key(['k', 'up'], () => moveSelection(-1));
+  widgets.screen.key(['enter'], () => {
+    if (focusPane === 'clusters') updateFocus('members');
+    else if (focusPane === 'members') updateFocus('detail');
+  });
+  widgets.screen.key(['s'], () => {
+    sortMode = cycleSortMode(sortMode);
+    status = `Sort: ${sortMode}`;
+    refreshAll(false);
+  });
+  widgets.screen.key(['f'], () => {
+    minSize = cycleMinSizeFilter(minSize);
+    status = `Min size: ${minSize === 0 ? 'all' : `${minSize}+`}`;
+    refreshAll(false);
+  });
+  widgets.screen.key(['/'], () => promptFilter());
+  widgets.screen.key(['r'], () => {
+    status = 'Refreshing';
+    refreshAll(true);
+  });
+  widgets.screen.key(['o'], () => openSelectedThread());
+  widgets.screen.on('resize', () => render());
+
+  widgets.screen.on('destroy', () => {
+    widgets.screen.program.showCursor();
+  });
+
+  widgets.screen.program.hideCursor();
+  refreshAll(false);
+  updateFocus('clusters');
+
+  await new Promise<void>((resolve) => widgets.screen.once('destroy', () => resolve()));
+}
+
+function createWidgets(owner: string, repo: string): Widgets {
+  const screen = blessed.screen({
+    smartCSR: true,
+    fullUnicode: true,
+    dockBorders: true,
+    autoPadding: false,
+    title: `gitcrawl ${owner}/${repo}`,
+  });
+  const header = blessed.box({
+    parent: screen,
+    tags: true,
+    style: { fg: 'white', bg: '#0d1321' },
+  });
+  const clusters = blessed.list({
+    parent: screen,
+    border: 'line',
+    label: ' Clusters ',
+    tags: false,
+    mouse: true,
+    keys: false,
+    style: {
+      border: { fg: '#5bc0eb' },
+      item: { fg: 'white' },
+      selected: { bg: '#5bc0eb', fg: 'black', bold: true },
+    },
+    scrollbar: { ch: ' ' },
+  });
+  const members = blessed.list({
+    parent: screen,
+    border: 'line',
+    label: ' Members ',
+    tags: false,
+    mouse: true,
+    keys: false,
+    style: {
+      border: { fg: '#9bc53d' },
+      item: { fg: 'white' },
+      selected: { bg: '#9bc53d', fg: 'black', bold: true },
+    },
+    scrollbar: { ch: ' ' },
+  });
+  const detail = blessed.box({
+    parent: screen,
+    border: 'line',
+    label: ' Detail ',
+    tags: true,
+    scrollable: true,
+    alwaysScroll: true,
+    keys: false,
+    mouse: true,
+    scrollbar: { ch: ' ' },
+    style: {
+      border: { fg: '#fde74c' },
+      fg: 'white',
+    },
+  });
+  const footer = blessed.box({
+    parent: screen,
+    tags: false,
+    style: { fg: 'black', bg: '#5bc0eb' },
+  });
+
+  return { screen, header, clusters, members, detail, footer };
+}
+
+function updatePaneStyles(widgets: Widgets, focus: TuiFocusPane): void {
+  widgets.clusters.style.border = { fg: focus === 'clusters' ? 'white' : '#5bc0eb' };
+  widgets.members.style.border = { fg: focus === 'members' ? 'white' : '#9bc53d' };
+  widgets.detail.style.border = { fg: focus === 'detail' ? 'white' : '#fde74c' };
+}
+
+function renderDetailPane(threadDetail: TuiThreadDetail | null, clusterDetail: TuiClusterDetail | null): string {
+  if (!clusterDetail) {
+    return 'No cluster selected.\n\nRun `gitcrawl cluster owner/repo` if you have not clustered this repository yet.';
+  }
+  if (!threadDetail) {
+    return `{bold}${clusterDetail.displayTitle}{/bold}\n\nSelect a member to inspect thread details.`;
+  }
+
+  const thread = threadDetail.thread;
+  const labels = thread.labels.length > 0 ? thread.labels.join(', ') : 'none';
+  const summaries = Object.entries(threadDetail.summaries)
+    .map(([key, value]) => `{bold}${key}:{/bold}\n${value}`)
+    .join('\n\n');
+  const neighbors =
+    threadDetail.neighbors.length > 0
+      ? threadDetail.neighbors
+          .map((neighbor) => `#${neighbor.number} ${neighbor.kind} ${(neighbor.score * 100).toFixed(1)}%  ${neighbor.title}`)
+          .join('\n')
+      : 'No neighbors available.';
+  return [
+    `{bold}${thread.kind} #${thread.number}{/bold}  ${thread.title}`,
+    '',
+    `{bold}Updated:{/bold} ${thread.updatedAtGh ?? 'unknown'}`,
+    `{bold}Labels:{/bold} ${labels}`,
+    `{bold}URL:{/bold} ${thread.htmlUrl}`,
+    '',
+    `{bold}Body{/bold}`,
+    thread.body ?? '(no body)',
+    summaries ? `\n\n${summaries}` : '',
+    `\n\n{bold}Neighbors{/bold}\n${neighbors}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+function applyRect(element: blessed.Widgets.BoxElement | blessed.Widgets.ListElement, rect: { top: number; left: number; width: number; height: number }): void {
+  element.top = rect.top;
+  element.left = rect.left;
+  element.width = rect.width;
+  element.height = rect.height;
+}
+
+function openUrl(url: string): void {
+  const command = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const child = spawn(command, [url], {
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+}

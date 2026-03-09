@@ -81,6 +81,64 @@ type StoredEmbeddingRow = ThreadRow & {
   embedding_json: string;
 };
 
+export type TuiClusterSortMode = 'recent' | 'size';
+
+export type TuiRepoStats = {
+  openIssueCount: number;
+  openPullRequestCount: number;
+  latestClusterRunId: number | null;
+  latestClusterRunFinishedAt: string | null;
+};
+
+export type TuiClusterSummary = {
+  clusterId: number;
+  displayTitle: string;
+  totalCount: number;
+  issueCount: number;
+  pullRequestCount: number;
+  latestUpdatedAt: string | null;
+  representativeThreadId: number | null;
+  representativeNumber: number | null;
+  representativeKind: 'issue' | 'pull_request' | null;
+  searchText: string;
+};
+
+export type TuiClusterMember = {
+  id: number;
+  number: number;
+  kind: 'issue' | 'pull_request';
+  title: string;
+  updatedAtGh: string | null;
+  htmlUrl: string;
+  labels: string[];
+  clusterScore: number | null;
+};
+
+export type TuiClusterDetail = {
+  clusterId: number;
+  displayTitle: string;
+  totalCount: number;
+  issueCount: number;
+  pullRequestCount: number;
+  latestUpdatedAt: string | null;
+  representativeThreadId: number | null;
+  representativeNumber: number | null;
+  representativeKind: 'issue' | 'pull_request' | null;
+  members: TuiClusterMember[];
+};
+
+export type TuiThreadDetail = {
+  thread: ThreadDto;
+  summaries: Partial<Record<'problem_summary' | 'solution_summary' | 'maintainer_signal_summary' | 'dedupe_summary', string>>;
+  neighbors: SearchHitDto['neighbors'];
+};
+
+export type TuiSnapshot = {
+  repository: RepositoryDto;
+  stats: TuiRepoStats;
+  clusters: TuiClusterSummary[];
+};
+
 export type DoctorResult = {
   health: HealthResponse;
   githubOk: boolean;
@@ -926,6 +984,167 @@ export class GitcrawlService {
     });
   }
 
+  getTuiSnapshot(params: {
+    owner: string;
+    repo: string;
+    minSize?: number;
+    sort?: TuiClusterSortMode;
+    search?: string;
+  }): TuiSnapshot {
+    const repository = this.requireRepository(params.owner, params.repo);
+    const stats = this.getTuiRepoStats(repository.id);
+    const latestRun = this.getLatestClusterRun(repository.id);
+    if (!latestRun) {
+      return { repository, stats, clusters: [] };
+    }
+
+    const clusters = this.listRawTuiClusters(repository.id, latestRun.id)
+      .filter((cluster) => cluster.totalCount >= (params.minSize ?? 10))
+      .filter((cluster) => {
+        const search = params.search?.trim().toLowerCase();
+        if (!search) return true;
+        return cluster.searchText.includes(search);
+      })
+      .sort((left, right) => this.compareTuiClusterSummary(left, right, params.sort ?? 'recent'));
+
+    return {
+      repository,
+      stats,
+      clusters,
+    };
+  }
+
+  getTuiClusterDetail(params: { owner: string; repo: string; clusterId: number }): TuiClusterDetail {
+    const repository = this.requireRepository(params.owner, params.repo);
+    const latestRun = this.getLatestClusterRun(repository.id);
+    if (!latestRun) {
+      throw new Error(`No completed cluster run found for ${repository.fullName}. Run cluster first.`);
+    }
+
+    const summary = this.listRawTuiClusters(repository.id, latestRun.id).find((cluster) => cluster.clusterId === params.clusterId);
+    if (!summary) {
+      throw new Error(`Cluster ${params.clusterId} was not found for ${repository.fullName}.`);
+    }
+
+    const rows = this.db
+      .prepare(
+        `select t.id, t.number, t.kind, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
+         from cluster_members cm
+         join threads t on t.id = cm.thread_id
+         where cm.cluster_id = ?
+         order by
+           case t.kind when 'issue' then 0 else 1 end asc,
+           coalesce(t.updated_at_gh, t.updated_at) desc,
+           t.number desc`,
+      )
+      .all(params.clusterId) as Array<{
+        id: number;
+        number: number;
+        kind: 'issue' | 'pull_request';
+        title: string;
+        updated_at_gh: string | null;
+        html_url: string;
+        labels_json: string;
+        score_to_representative: number | null;
+      }>;
+
+    return {
+      clusterId: summary.clusterId,
+      displayTitle: summary.displayTitle,
+      totalCount: summary.totalCount,
+      issueCount: summary.issueCount,
+      pullRequestCount: summary.pullRequestCount,
+      latestUpdatedAt: summary.latestUpdatedAt,
+      representativeThreadId: summary.representativeThreadId,
+      representativeNumber: summary.representativeNumber,
+      representativeKind: summary.representativeKind,
+      members: rows.map((row) => ({
+        id: row.id,
+        number: row.number,
+        kind: row.kind,
+        title: row.title,
+        updatedAtGh: row.updated_at_gh,
+        htmlUrl: row.html_url,
+        labels: parseArray(row.labels_json),
+        clusterScore: row.score_to_representative,
+      })),
+    };
+  }
+
+  getTuiThreadDetail(params: {
+    owner: string;
+    repo: string;
+    threadId?: number;
+    threadNumber?: number;
+  }): TuiThreadDetail {
+    const repository = this.requireRepository(params.owner, params.repo);
+    const row = params.threadId
+      ? ((this.db
+          .prepare('select * from threads where repo_id = ? and id = ? and state = \'open\' limit 1')
+          .get(repository.id, params.threadId) as ThreadRow | undefined) ?? null)
+      : params.threadNumber
+        ? ((this.db
+            .prepare('select * from threads where repo_id = ? and number = ? and state = \'open\' limit 1')
+            .get(repository.id, params.threadNumber) as ThreadRow | undefined) ?? null)
+        : null;
+
+    if (!row) {
+      throw new Error(`Thread was not found for ${repository.fullName}.`);
+    }
+
+    const latestRun = this.getLatestClusterRun(repository.id);
+    const clusterMembership = latestRun
+      ? ((this.db
+          .prepare(
+            `select cm.cluster_id
+             from cluster_members cm
+             join clusters c on c.id = cm.cluster_id
+             where c.cluster_run_id = ? and cm.thread_id = ?
+             limit 1`,
+          )
+          .get(latestRun.id, row.id) as { cluster_id: number } | undefined) ?? null)
+      : null;
+
+    const summaryRows = this.db
+      .prepare(
+        `select summary_kind, summary_text
+         from document_summaries
+         where thread_id = ? and model = ?
+         order by summary_kind asc`,
+      )
+      .all(row.id, this.config.summaryModel) as Array<{ summary_kind: string; summary_text: string }>;
+    const summaries: TuiThreadDetail['summaries'] = {};
+    for (const summary of summaryRows) {
+      if (
+        summary.summary_kind === 'problem_summary' ||
+        summary.summary_kind === 'solution_summary' ||
+        summary.summary_kind === 'maintainer_signal_summary' ||
+        summary.summary_kind === 'dedupe_summary'
+      ) {
+        summaries[summary.summary_kind] = summary.summary_text;
+      }
+    }
+
+    let neighbors: SearchHitDto['neighbors'] = [];
+    try {
+      neighbors = this.listNeighbors({
+        owner: params.owner,
+        repo: params.repo,
+        threadNumber: row.number,
+        limit: 8,
+        minScore: 0.2,
+      }).neighbors;
+    } catch {
+      neighbors = [];
+    }
+
+    return {
+      thread: threadToDto(row, clusterMembership?.cluster_id ?? null),
+      summaries,
+      neighbors,
+    };
+  }
+
   async rerunAction(request: ActionRequest): Promise<ActionResponse> {
     switch (request.action) {
       case 'summarize': {
@@ -956,6 +1175,95 @@ export class GitcrawlService {
         });
       }
     }
+  }
+
+  private getTuiRepoStats(repoId: number): TuiRepoStats {
+    const counts = this.db
+      .prepare(
+        `select kind, count(*) as count
+         from threads
+         where repo_id = ? and state = 'open'
+         group by kind`,
+      )
+      .all(repoId) as Array<{ kind: 'issue' | 'pull_request'; count: number }>;
+    const latestRun = this.getLatestClusterRun(repoId);
+    return {
+      openIssueCount: counts.find((row) => row.kind === 'issue')?.count ?? 0,
+      openPullRequestCount: counts.find((row) => row.kind === 'pull_request')?.count ?? 0,
+      latestClusterRunId: latestRun?.id ?? null,
+      latestClusterRunFinishedAt: latestRun?.finished_at ?? null,
+    };
+  }
+
+  private getLatestClusterRun(repoId: number): { id: number; finished_at: string | null } | null {
+    return (
+      (this.db
+        .prepare("select id, finished_at from cluster_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
+        .get(repoId) as { id: number; finished_at: string | null } | undefined) ?? null
+    );
+  }
+
+  private listRawTuiClusters(repoId: number, clusterRunId: number): TuiClusterSummary[] {
+    const rows = this.db
+      .prepare(
+        `select
+            c.id as cluster_id,
+            c.member_count,
+            c.representative_thread_id,
+            rt.number as representative_number,
+            rt.kind as representative_kind,
+            rt.title as representative_title,
+            max(coalesce(t.updated_at_gh, t.updated_at)) as latest_updated_at,
+            sum(case when t.kind = 'issue' then 1 else 0 end) as issue_count,
+            sum(case when t.kind = 'pull_request' then 1 else 0 end) as pull_request_count,
+            group_concat(lower(coalesce(t.title, '')), ' ') as search_text
+         from clusters c
+         left join threads rt on rt.id = c.representative_thread_id
+         join cluster_members cm on cm.cluster_id = c.id
+         join threads t on t.id = cm.thread_id
+         where c.repo_id = ? and c.cluster_run_id = ?
+         group by
+           c.id,
+           c.member_count,
+           c.representative_thread_id,
+           rt.number,
+           rt.kind,
+           rt.title`,
+      )
+      .all(repoId, clusterRunId) as Array<{
+        cluster_id: number;
+        member_count: number;
+        representative_thread_id: number | null;
+        representative_number: number | null;
+        representative_kind: 'issue' | 'pull_request' | null;
+        representative_title: string | null;
+        latest_updated_at: string | null;
+        issue_count: number;
+        pull_request_count: number;
+        search_text: string | null;
+      }>;
+
+    return rows.map((row) => ({
+      clusterId: row.cluster_id,
+      displayTitle: row.representative_title ?? `Cluster ${row.cluster_id}`,
+      totalCount: row.member_count,
+      issueCount: row.issue_count,
+      pullRequestCount: row.pull_request_count,
+      latestUpdatedAt: row.latest_updated_at,
+      representativeThreadId: row.representative_thread_id,
+      representativeNumber: row.representative_number,
+      representativeKind: row.representative_kind,
+      searchText: `${(row.representative_title ?? '').toLowerCase()} ${row.search_text ?? ''}`.trim(),
+    }));
+  }
+
+  private compareTuiClusterSummary(left: TuiClusterSummary, right: TuiClusterSummary, sort: TuiClusterSortMode): number {
+    const leftTime = left.latestUpdatedAt ? Date.parse(left.latestUpdatedAt) : 0;
+    const rightTime = right.latestUpdatedAt ? Date.parse(right.latestUpdatedAt) : 0;
+    if (sort === 'size') {
+      return right.totalCount - left.totalCount || rightTime - leftTime || left.clusterId - right.clusterId;
+    }
+    return rightTime - leftTime || right.totalCount - left.totalCount || left.clusterId - right.clusterId;
   }
 
   private async fetchThreadComments(

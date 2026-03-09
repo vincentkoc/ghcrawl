@@ -116,6 +116,12 @@ Inspect exact nearest neighbors for one embedded thread:
 pnpm --filter @gitcrawl/cli cli neighbors openclaw/openclaw --number 42 --limit 10
 ```
 
+Open the local cluster browser TUI:
+
+```bash
+pnpm --filter @gitcrawl/cli cli tui openclaw/openclaw
+```
+
 Notes:
 
 - `summarize` is metadata-only by default and excludes comments unless you pass `--include-comments`
@@ -128,6 +134,8 @@ Notes:
 - oversized embedding inputs are truncated locally and requests are split by a conservative token budget before submission
 - the embedding worker defaults are `batch_size=8`, `concurrency=10`, and `max_unread=20`; override them with `GITCRAWL_EMBED_BATCH_SIZE`, `GITCRAWL_EMBED_CONCURRENCY`, and `GITCRAWL_EMBED_MAX_UNREAD` if needed
 - `neighbors` only works after `embed` has populated at least one embedding source for the repo
+- `tui` expects a completed cluster run and shows the latest completed run for the repo
+- inside the TUI: `Tab` changes pane, `j/k` moves, `s` changes sort, `f` changes min cluster size, `/` filters, `o` opens the selected GitHub URL, and `q` quits
 
 ## Search
 

@@ -1011,6 +1011,193 @@ test('listNeighbors returns exact nearest neighbors for an embedded thread', () 
   }
 });
 
+test('tui snapshot returns mixed issue and pull request counts with default recent sort and filters', () => {
+  const service = makeTestService({
+    checkAuth: async () => undefined,
+    getRepo: async () => ({}),
+    listRepositoryIssues: async () => [],
+    getIssue: async () => ({}),
+    getPull: async () => ({}),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+  });
+
+  try {
+    const now = '2026-03-09T12:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+
+    const insertThread = service.db.prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertThread.run(10, 1, '100', 42, 'issue', 'open', 'Old issue cluster', 'body', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, '2026-03-07T00:00:00Z', null, null, now, now, now);
+    insertThread.run(11, 1, '101', 43, 'pull_request', 'open', 'Old PR cluster', 'body', 'bob', 'User', 'https://github.com/openclaw/openclaw/pull/43', '[]', '[]', '{}', 'hash-43', 0, now, '2026-03-07T00:00:00Z', null, null, now, now, now);
+    insertThread.run(12, 1, '102', 44, 'issue', 'open', 'Recent issue cluster', 'body', 'carol', 'User', 'https://github.com/openclaw/openclaw/issues/44', '[]', '[]', '{}', 'hash-44', 0, now, '2026-03-09T14:00:00Z', null, null, now, now, now);
+    insertThread.run(13, 1, '103', 45, 'issue', 'open', 'Recent issue followup', 'body', 'dave', 'User', 'https://github.com/openclaw/openclaw/issues/45', '[]', '[]', '{}', 'hash-45', 0, now, '2026-03-09T13:00:00Z', null, null, now, now, now);
+    insertThread.run(14, 1, '104', 46, 'pull_request', 'open', 'Recent PR followup', 'body', 'erin', 'User', 'https://github.com/openclaw/openclaw/pull/46', '[]', '[]', '{}', 'hash-46', 0, now, '2026-03-09T12:30:00Z', null, null, now, now, now);
+
+    service.db
+      .prepare(`insert into cluster_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 'openclaw/openclaw', 'completed', now, '2026-03-09T14:30:00Z');
+    service.db
+      .prepare(
+        `insert into clusters (id, repo_id, cluster_run_id, representative_thread_id, member_count, created_at)
+         values (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(100, 1, 1, 10, 2, now);
+    service.db
+      .prepare(
+        `insert into clusters (id, repo_id, cluster_run_id, representative_thread_id, member_count, created_at)
+         values (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(101, 1, 1, 12, 3, now);
+    const insertMember = service.db.prepare(
+      `insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at)
+       values (?, ?, ?, ?)`,
+    );
+    insertMember.run(100, 10, null, now);
+    insertMember.run(100, 11, 0.9, now);
+    insertMember.run(101, 12, null, now);
+    insertMember.run(101, 13, 0.95, now);
+    insertMember.run(101, 14, 0.88, now);
+
+    const snapshot = service.getTuiSnapshot({ owner: 'openclaw', repo: 'openclaw' });
+    assert.equal(snapshot.stats.openIssueCount, 3);
+    assert.equal(snapshot.stats.openPullRequestCount, 2);
+    assert.equal(snapshot.stats.latestClusterRunId, 1);
+    assert.equal(snapshot.clusters.length, 0);
+
+    const allSnapshot = service.getTuiSnapshot({ owner: 'openclaw', repo: 'openclaw', minSize: 0 });
+    assert.deepEqual(
+      allSnapshot.clusters.map((cluster) => cluster.clusterId),
+      [101, 100],
+    );
+    assert.equal(allSnapshot.clusters[0].issueCount, 2);
+    assert.equal(allSnapshot.clusters[0].pullRequestCount, 1);
+    assert.equal(allSnapshot.clusters[0].displayTitle, 'Recent issue cluster');
+
+    const sizeSorted = service.getTuiSnapshot({ owner: 'openclaw', repo: 'openclaw', minSize: 0, sort: 'size' });
+    assert.deepEqual(
+      sizeSorted.clusters.map((cluster) => cluster.clusterId),
+      [101, 100],
+    );
+
+    const filtered = service.getTuiSnapshot({ owner: 'openclaw', repo: 'openclaw', minSize: 0, search: 'old pr cluster' });
+    assert.deepEqual(
+      filtered.clusters.map((cluster) => cluster.clusterId),
+      [100],
+    );
+  } finally {
+    service.close();
+  }
+});
+
+test('tui cluster detail and thread detail expose members, summaries, and neighbors', () => {
+  const service = makeTestService({
+    checkAuth: async () => undefined,
+    getRepo: async () => ({}),
+    listRepositoryIssues: async () => [],
+    getIssue: async () => ({}),
+    getPull: async () => ({}),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+  });
+
+  try {
+    const now = '2026-03-09T12:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+
+    const insertThread = service.db.prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertThread.run(10, 1, '100', 42, 'issue', 'open', 'Downloader hangs', 'The transfer never finishes.', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '["bug"]', '[]', '{}', 'hash-42', 0, now, now, null, null, now, now, now);
+    insertThread.run(11, 1, '101', 43, 'pull_request', 'open', 'Fix downloader hang', 'Implements a fix.', 'bob', 'User', 'https://github.com/openclaw/openclaw/pull/43', '["bug"]', '[]', '{}', 'hash-43', 0, now, now, null, null, now, now, now);
+
+    service.db
+      .prepare(`insert into cluster_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 'openclaw/openclaw', 'completed', now, now);
+    service.db
+      .prepare(
+        `insert into clusters (id, repo_id, cluster_run_id, representative_thread_id, member_count, created_at)
+         values (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(100, 1, 1, 10, 2, now);
+    service.db
+      .prepare(
+        `insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at)
+         values (?, ?, ?, ?)`,
+      )
+      .run(100, 10, null, now);
+    service.db
+      .prepare(
+        `insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at)
+         values (?, ?, ?, ?)`,
+      )
+      .run(100, 11, 0.93, now);
+    service.db
+      .prepare(
+        `insert into document_summaries (thread_id, summary_kind, model, content_hash, summary_text, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(10, 'problem_summary', 'gpt-5-mini', 'hash-problem', 'Downloads hang before completion.', now, now);
+    service.db
+      .prepare(
+        `insert into document_summaries (thread_id, summary_kind, model, content_hash, summary_text, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(10, 'dedupe_summary', 'gpt-5-mini', 'hash-dedupe', 'Transfer stalls near completion.', now, now);
+    service.db
+      .prepare(
+        `insert into document_embeddings (thread_id, source_kind, model, dimensions, content_hash, embedding_json, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(10, 'title', 'text-embedding-3-large', 2, 'hash-title-42', '[1,0]', now, now);
+    service.db
+      .prepare(
+        `insert into document_embeddings (thread_id, source_kind, model, dimensions, content_hash, embedding_json, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(11, 'title', 'text-embedding-3-large', 2, 'hash-title-43', '[0.95,0.05]', now, now);
+
+    const detail = service.getTuiClusterDetail({ owner: 'openclaw', repo: 'openclaw', clusterId: 100 });
+    assert.equal(detail.totalCount, 2);
+    assert.equal(detail.issueCount, 1);
+    assert.equal(detail.pullRequestCount, 1);
+    assert.equal(detail.members[0].kind, 'issue');
+    assert.equal(detail.members[1].kind, 'pull_request');
+    assert.equal(detail.members[1].clusterScore, 0.93);
+
+    const threadDetail = service.getTuiThreadDetail({ owner: 'openclaw', repo: 'openclaw', threadNumber: 42 });
+    assert.equal(threadDetail.thread.number, 42);
+    assert.equal(threadDetail.thread.labels[0], 'bug');
+    assert.equal(threadDetail.thread.htmlUrl, 'https://github.com/openclaw/openclaw/issues/42');
+    assert.equal(threadDetail.summaries.problem_summary, 'Downloads hang before completion.');
+    assert.equal(threadDetail.summaries.dedupe_summary, 'Transfer stalls near completion.');
+    assert.equal(threadDetail.neighbors[0]?.number, 43);
+  } finally {
+    service.close();
+  }
+});
+
 test('syncRepository reconciles stale open threads and marks confirmed closures without re-fetching comments', async () => {
   let listIssueCommentCalls = 0;
   let getIssueCalls = 0;

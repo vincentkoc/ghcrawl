@@ -1,10 +1,10 @@
 {
   "name": "@gitcrawl/cli",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "type": "module",
   "description": "Gitcrawl terminal UI and CLI runtime",
   "author": "PwrDrvr LLC <harold@pwrdrvr.com>",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "homepage": "https://github.com/pwrdrvr/gitcrawl",
   "bugs": {
     "url": "https://github.com/pwrdrvr/gitcrawl/issues"

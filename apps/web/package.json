@@ -1,6 +1,6 @@
 {
   "name": "@gitcrawl/web",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "type": "module",
   "description": "Deferred future Vite + shadcn/ui web app placeholder",

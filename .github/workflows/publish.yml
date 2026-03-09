@@ -1,0 +1,55 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag in the form vX.Y.Z
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish Packages
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js and dependencies
+        uses: ./.github/actions/configure-nodejs
+
+      - name: Apply release version from tag
+        run: pnpm release:apply-version "$RELEASE_TAG"
+
+      - name: Run workspace typecheck
+        run: pnpm typecheck
+
+      - name: Run workspace tests
+        run: pnpm test
+
+      - name: Run package smoke install
+        run: pnpm pack:smoke
+
+      - name: Configure npm authentication
+        run: |
+          cat <<'EOF' > ~/.npmrc
+          //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+          EOF
+
+      - name: Publish @gitcrawl/api-contract
+        run: pnpm --filter @gitcrawl/api-contract publish --no-git-checks --access public
+
+      - name: Publish @gitcrawl/api-core
+        run: pnpm --filter @gitcrawl/api-core publish --no-git-checks --access public
+
+      - name: Publish @gitcrawl/cli
+        run: pnpm --filter @gitcrawl/cli publish --no-git-checks --access public

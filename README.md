@@ -22,6 +22,15 @@ For a full first-run walkthrough against `openclaw/openclaw`, see [GETTING-START
 
 Use `pnpm health` for the root-level doctor helper. `pnpm doctor` is a built-in pnpm command and does not run gitcrawl.
 
+If you configured gitcrawl for 1Password CLI, there are root helpers for that too:
+
+```bash
+pnpm op:doctor
+pnpm op:tui
+pnpm op:exec -- sync openclaw/openclaw
+pnpm op:shell
+```
+
 ## Root Helpers
 
 The root package exposes pass-through helpers so you do not need to remember the workspace filter syntax:
@@ -124,6 +133,14 @@ If you use the `gitcrawl-op` shell wrapper from init, the lazy path becomes:
 ```bash
 gitcrawl-op doctor
 gitcrawl-op tui
+```
+
+If you do not want a shell function, the repo root also exposes:
+
+```bash
+pnpm op:doctor
+pnpm op:tui
+pnpm op:shell
 ```
 
 Environment overrides are still supported and take precedence over the saved config:

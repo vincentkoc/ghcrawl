@@ -234,7 +234,7 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
           },
         });
         const result = await getService().doctor();
-        const shouldWriteJson = parsed.values.json === true || !stdout.isTTY;
+        const shouldWriteJson = parsed.values.json === true || (stdout as NodeJS.WriteStream).isTTY !== true;
         stdout.write(shouldWriteJson ? `${JSON.stringify(result, null, 2)}\n` : formatDoctorReport(result));
         return;
       }

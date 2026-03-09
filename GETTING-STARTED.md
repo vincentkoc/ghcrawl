@@ -75,6 +75,15 @@ env \
   pnpm health
 ```
 
+You can also use the root 1Password helpers:
+
+```bash
+pnpm op:doctor
+pnpm op:tui
+pnpm op:exec -- sync openclaw/openclaw
+pnpm op:shell
+```
+
 ## Sync `openclaw/openclaw`
 
 Full sync:

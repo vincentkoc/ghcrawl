@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import type { TuiClusterDetail, TuiThreadDetail } from '@gitcrawl/api-core';
 
-import { escapeBlessedText, renderDetailPane } from './app.js';
+import { escapeBlessedText, getRepositoryChoices, parseOwnerRepoValue, renderDetailPane } from './app.js';
 
 test('escapeBlessedText escapes blessed tag delimiters', () => {
   assert.equal(escapeBlessedText('{bold}wow{/bold}'), '\\{bold\\}wow\\{/bold\\}');
@@ -57,4 +57,42 @@ test('renderDetailPane escapes user-provided text before rendering into a tags-e
   assert.match(rendered, /Body with \\{red-fg\\}tags\\{\/red-fg\\}/);
   assert.match(rendered, /Summary \\{yellow-fg\\}text\\{\/yellow-fg\\}/);
   assert.match(rendered, /Neighbor \\{blue-fg\\}title\\{\/blue-fg\\}/);
+});
+
+test('parseOwnerRepoValue accepts owner slash repo values and rejects invalid ones', () => {
+  assert.deepEqual(parseOwnerRepoValue('openclaw/openclaw'), { owner: 'openclaw', repo: 'openclaw' });
+  assert.equal(parseOwnerRepoValue('openclaw'), null);
+});
+
+test('getRepositoryChoices sorts by most recent update and includes the new-repo action', () => {
+  const service = {
+    listRepositories() {
+      return {
+        repositories: [
+          {
+            id: 1,
+            owner: 'older',
+            name: 'repo',
+            fullName: 'older/repo',
+            githubRepoId: '1',
+            updatedAt: '2026-03-08T12:00:00Z',
+          },
+          {
+            id: 2,
+            owner: 'newer',
+            name: 'repo',
+            fullName: 'newer/repo',
+            githubRepoId: '2',
+            updatedAt: '2026-03-09T12:00:00Z',
+          },
+        ],
+      };
+    },
+  };
+
+  const choices = getRepositoryChoices(service, new Date('2026-03-09T12:30:00Z'));
+  assert.equal(choices[0]?.kind, 'existing');
+  assert.equal(choices[0]?.target.owner, 'newer');
+  assert.match(choices[0]?.label ?? '', /newer\/repo/);
+  assert.equal(choices.at(-1)?.kind, 'new');
 });

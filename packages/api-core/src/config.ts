@@ -136,6 +136,14 @@ function getString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
 }
 
+function getEnvString(env: NodeJS.ProcessEnv, primary: string, legacy?: string): string | undefined {
+  return getString(env[primary]) ?? (legacy ? getString(env[legacy]) : undefined);
+}
+
+function getDotenvString(values: Record<string, string>, primary: string, legacy?: string): string | undefined {
+  return getString(values[primary]) ?? (legacy ? getString(values[legacy]) : undefined);
+}
+
 function getNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
@@ -261,9 +269,9 @@ export function loadConfig(options: LoadConfigOptions = {}): GitcrawlConfig {
     { source: 'dotenv', value: getString(dotenvValues.OPENAI_API_KEY) },
   );
   const configuredDbPath = pickDefined<string>(
-    { source: 'env', value: getString(env.GITCRAWL_DB_PATH) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_DB_PATH', 'GITCRAWL_DB_PATH') },
     { source: 'config', value: stored.data.dbPath },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_DB_PATH) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_DB_PATH', 'GITCRAWL_DB_PATH') },
   );
   const workspaceDbPath = configuredDbPath.value === undefined ? getWorkspaceDbPath(workspaceRoot) : null;
   const dbPathValue =
@@ -271,50 +279,50 @@ export function loadConfig(options: LoadConfigOptions = {}): GitcrawlConfig {
       ? { source: 'default' as const, value: workspaceDbPath }
       : pickDefined<string>(configuredDbPath, { source: 'default', value: 'ghcrawl.db' });
   const apiPortValue = pickDefined<string | number>(
-    { source: 'env', value: getString(env.GITCRAWL_API_PORT) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_API_PORT', 'GITCRAWL_API_PORT') },
     { source: 'config', value: stored.data.apiPort },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_API_PORT) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_API_PORT', 'GITCRAWL_API_PORT') },
     { source: 'default', value: '5179' },
   );
   const embedBatchSizeValue = pickDefined<string | number>(
-    { source: 'env', value: getString(env.GITCRAWL_EMBED_BATCH_SIZE) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_EMBED_BATCH_SIZE', 'GITCRAWL_EMBED_BATCH_SIZE') },
     { source: 'config', value: stored.data.embedBatchSize },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_EMBED_BATCH_SIZE) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_EMBED_BATCH_SIZE', 'GITCRAWL_EMBED_BATCH_SIZE') },
     { source: 'default', value: '8' },
   );
   const embedConcurrencyValue = pickDefined<string | number>(
-    { source: 'env', value: getString(env.GITCRAWL_EMBED_CONCURRENCY) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_EMBED_CONCURRENCY', 'GITCRAWL_EMBED_CONCURRENCY') },
     { source: 'config', value: stored.data.embedConcurrency },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_EMBED_CONCURRENCY) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_EMBED_CONCURRENCY', 'GITCRAWL_EMBED_CONCURRENCY') },
     { source: 'default', value: '10' },
   );
   const embedMaxUnreadValue = pickDefined<string | number>(
-    { source: 'env', value: getString(env.GITCRAWL_EMBED_MAX_UNREAD) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_EMBED_MAX_UNREAD', 'GITCRAWL_EMBED_MAX_UNREAD') },
     { source: 'config', value: stored.data.embedMaxUnread },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_EMBED_MAX_UNREAD) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_EMBED_MAX_UNREAD', 'GITCRAWL_EMBED_MAX_UNREAD') },
     { source: 'default', value: '20' },
   );
   const summaryModel = pickDefined<string>(
-    { source: 'env', value: getString(env.GITCRAWL_SUMMARY_MODEL) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_SUMMARY_MODEL', 'GITCRAWL_SUMMARY_MODEL') },
     { source: 'config', value: stored.data.summaryModel },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_SUMMARY_MODEL) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_SUMMARY_MODEL', 'GITCRAWL_SUMMARY_MODEL') },
     { source: 'default', value: 'gpt-5-mini' },
   );
   const embedModel = pickDefined<string>(
-    { source: 'env', value: getString(env.GITCRAWL_EMBED_MODEL) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_EMBED_MODEL', 'GITCRAWL_EMBED_MODEL') },
     { source: 'config', value: stored.data.embedModel },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_EMBED_MODEL) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_EMBED_MODEL', 'GITCRAWL_EMBED_MODEL') },
     { source: 'default', value: 'text-embedding-3-large' },
   );
   const openSearchUrl = pickDefined<string>(
-    { source: 'env', value: getString(env.GITCRAWL_OPENSEARCH_URL) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_OPENSEARCH_URL', 'GITCRAWL_OPENSEARCH_URL') },
     { source: 'config', value: stored.data.openSearchUrl },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_OPENSEARCH_URL) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_OPENSEARCH_URL', 'GITCRAWL_OPENSEARCH_URL') },
   );
   const openSearchIndex = pickDefined<string>(
-    { source: 'env', value: getString(env.GITCRAWL_OPENSEARCH_INDEX) },
+    { source: 'env', value: getEnvString(env, 'GHCRAWL_OPENSEARCH_INDEX', 'GITCRAWL_OPENSEARCH_INDEX') },
     { source: 'config', value: stored.data.openSearchIndex },
-    { source: 'dotenv', value: getString(dotenvValues.GITCRAWL_OPENSEARCH_INDEX) },
+    { source: 'dotenv', value: getDotenvString(dotenvValues, 'GHCRAWL_OPENSEARCH_INDEX', 'GITCRAWL_OPENSEARCH_INDEX') },
     { source: 'default', value: 'ghcrawl-threads' },
   );
 
@@ -322,10 +330,10 @@ export function loadConfig(options: LoadConfigOptions = {}): GitcrawlConfig {
     dbPathValue.value && path.isAbsolute(dbPathValue.value)
       ? dbPathValue.value
       : resolveConfiguredPath(stored.configDir, dbPathValue.value ?? 'ghcrawl.db');
-  const apiPort = parseIntegerSetting('GITCRAWL_API_PORT', String(apiPortValue.value ?? '5179'));
-  const embedBatchSize = parseIntegerSetting('GITCRAWL_EMBED_BATCH_SIZE', String(embedBatchSizeValue.value ?? '8'));
-  const embedConcurrency = parseIntegerSetting('GITCRAWL_EMBED_CONCURRENCY', String(embedConcurrencyValue.value ?? '10'));
-  const embedMaxUnread = parseIntegerSetting('GITCRAWL_EMBED_MAX_UNREAD', String(embedMaxUnreadValue.value ?? '20'));
+  const apiPort = parseIntegerSetting('GHCRAWL_API_PORT', String(apiPortValue.value ?? '5179'));
+  const embedBatchSize = parseIntegerSetting('GHCRAWL_EMBED_BATCH_SIZE', String(embedBatchSizeValue.value ?? '8'));
+  const embedConcurrency = parseIntegerSetting('GHCRAWL_EMBED_CONCURRENCY', String(embedConcurrencyValue.value ?? '10'));
+  const embedMaxUnread = parseIntegerSetting('GHCRAWL_EMBED_MAX_UNREAD', String(embedMaxUnreadValue.value ?? '20'));
 
   return {
     workspaceRoot,

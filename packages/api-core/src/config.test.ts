@@ -63,7 +63,7 @@ test('loadConfig lets environment variables override persisted config', () => {
     ...makeTestEnv(),
     HOME: home,
     GITHUB_TOKEN: 'ghp_override1234567890',
-    GITCRAWL_API_PORT: '7001',
+    GHCRAWL_API_PORT: '7001',
   };
 
   writePersistedConfig(
@@ -86,7 +86,7 @@ test('loadConfig falls back to repo .env.local when no persisted config exists',
   fs.writeFileSync(path.join(workspace, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
   fs.writeFileSync(
     path.join(workspace, '.env.local'),
-    ['GITHUB_TOKEN=ghp_dotenv1234567890', 'OPENAI_API_KEY=sk-proj-dotenv1234567890', 'GITCRAWL_API_PORT=6111'].join('\n'),
+    ['GITHUB_TOKEN=ghp_dotenv1234567890', 'OPENAI_API_KEY=sk-proj-dotenv1234567890', 'GHCRAWL_API_PORT=6111'].join('\n'),
   );
 
   const config = loadConfig({
@@ -221,7 +221,7 @@ test('loadConfig rejects invalid port', () => {
   assert.throws(() =>
     loadConfig({
       cwd: process.cwd(),
-      env: { ...makeTestEnv(), HOME: home, GITCRAWL_API_PORT: 'abc' },
+      env: { ...makeTestEnv(), HOME: home, GHCRAWL_API_PORT: 'abc' },
     }),
   );
 });
@@ -231,7 +231,7 @@ test('loadConfig rejects invalid embed queue settings', () => {
   assert.throws(() =>
     loadConfig({
       cwd: process.cwd(),
-      env: { ...makeTestEnv(), HOME: home, GITCRAWL_EMBED_CONCURRENCY: '0' },
+      env: { ...makeTestEnv(), HOME: home, GHCRAWL_EMBED_CONCURRENCY: '0' },
     }),
   );
 });

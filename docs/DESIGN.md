@@ -1,4 +1,4 @@
-# GitCrawl Design
+# ghcrawl Design
 
 ## Intent
 
@@ -135,12 +135,12 @@ Environment variables:
 
 - `GITHUB_TOKEN`
 - `OPENAI_API_KEY`
-- `GITCRAWL_DB_PATH` with default `data/ghcrawl.db`
-- `GITCRAWL_API_PORT` with default `5179`
-- `GITCRAWL_SUMMARY_MODEL` with default `gpt-5-mini`
-- `GITCRAWL_EMBED_MODEL` with default `text-embedding-3-small`
-- `GITCRAWL_OPENSEARCH_URL` optional
-- `GITCRAWL_OPENSEARCH_INDEX` optional
+- `GHCRAWL_DB_PATH` with default `data/ghcrawl.db`
+- `GHCRAWL_API_PORT` with default `5179`
+- `GHCRAWL_SUMMARY_MODEL` with default `gpt-5-mini`
+- `GHCRAWL_EMBED_MODEL` with default `text-embedding-3-small`
+- `GHCRAWL_OPENSEARCH_URL` optional
+- `GHCRAWL_OPENSEARCH_INDEX` optional
 
 Local config file:
 

@@ -1,4 +1,4 @@
-# GitCrawl Agent Notes
+# ghcrawl Agent Notes
 
 ## Purpose
 

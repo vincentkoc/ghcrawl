@@ -1,4 +1,4 @@
-# GitCrawl Plan
+# ghcrawl Plan
 
 ## Summary Of Goals And Facts
 
@@ -36,7 +36,7 @@
 - [x] Implement explicit `.env.local` loading via `dotenv`.
 - [x] Read `GITHUB_TOKEN` and fail clearly when missing.
 - [x] Read `OPENAI_API_KEY` and fail clearly when missing for OpenAI-dependent commands.
-- [x] Define `GITCRAWL_DB_PATH`, `GITCRAWL_API_PORT`, `GITCRAWL_SUMMARY_MODEL`, and `GITCRAWL_EMBED_MODEL`.
+- [x] Define `GHCRAWL_DB_PATH`, `GHCRAWL_API_PORT`, `GHCRAWL_SUMMARY_MODEL`, and `GHCRAWL_EMBED_MODEL`.
 - [ ] Decide whether to add a persisted runtime config file now or after first sync works.
 - [x] Implement `doctor` checks for env vars, SQLite path creation, and optional OpenSearch reachability.
 - [x] Testing goal: config unit tests cover defaults, missing env vars, and override behavior.

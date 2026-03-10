@@ -49,7 +49,7 @@ function usage(devMode = false): string {
 }
 
 function parseGlobalFlags(argv: string[], env: NodeJS.ProcessEnv = process.env): { argv: string[]; devMode: boolean } {
-  let devMode = env.GITCRAWL_DEV_MODE === '1';
+  let devMode = env.GHCRAWL_DEV_MODE === '1' || env.GITCRAWL_DEV_MODE === '1';
   const filtered: string[] = [];
   for (const arg of argv) {
     if (arg === '--dev') {

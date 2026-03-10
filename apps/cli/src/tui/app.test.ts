@@ -7,6 +7,7 @@ import {
   buildUpdatePipelineLabels,
   describeUpdateTask,
   escapeBlessedText,
+  formatClusterDateColumn,
   getRepositoryChoices,
   parseOwnerRepoValue,
   renderDetailPane,
@@ -83,6 +84,13 @@ test('parseOwnerRepoValue accepts owner slash repo values and rejects invalid on
 test('resolveBlessedTerminal normalizes ghostty to xterm-256color', () => {
   assert.equal(resolveBlessedTerminal({ TERM: 'xterm-ghostty' } as NodeJS.ProcessEnv), 'xterm-256color');
   assert.equal(resolveBlessedTerminal({ TERM: 'xterm-256color' } as NodeJS.ProcessEnv), 'xterm-256color');
+});
+
+test('formatClusterDateColumn follows locale month/day ordering while keeping fixed time width', () => {
+  const iso = '2026-03-10T16:04:00';
+
+  assert.equal(formatClusterDateColumn(iso, 'en-US'), '03-10 16:04');
+  assert.equal(formatClusterDateColumn(iso, 'en-GB'), '10-03 16:04');
 });
 
 test('getRepositoryChoices sorts by most recent update and includes the new-repo action', () => {

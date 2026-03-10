@@ -286,7 +286,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
 
     const clusterItems = snapshot
       ? snapshot.clusters.map((cluster) => {
-          const updated = cluster.latestUpdatedAt ? cluster.latestUpdatedAt.slice(5, 16).replace('T', ' ') : 'unknown';
+          const updated = formatClusterDateColumn(cluster.latestUpdatedAt);
           const label = `${String(cluster.totalCount).padStart(3, ' ')}  C${String(cluster.clusterId).padStart(5, ' ')}  ${String(cluster.pullRequestCount).padStart(2, ' ')}P/${String(cluster.issueCount).padStart(2, ' ')}I  ${updated}  ${cluster.displayTitle}`;
           return cluster.isClosed ? `{gray-fg}${escapeBlessedText(label)}{/gray-fg}` : escapeBlessedText(label);
         })
@@ -1352,6 +1352,27 @@ function parseDateOrNull(value: string | null | undefined): number | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+export function formatClusterDateColumn(value: string | null, locales?: Intl.LocalesArgument): string {
+  if (!value) return 'unknown';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  const hour = String(parsed.getHours()).padStart(2, '0');
+  const minute = String(parsed.getMinutes()).padStart(2, '0');
+  const ordering = new Intl.DateTimeFormat(locales, {
+    month: '2-digit',
+    day: '2-digit',
+  })
+    .formatToParts(parsed)
+    .filter((part) => part.type === 'month' || part.type === 'day')
+    .map((part) => part.type);
+  const date = ordering[0] === 'day' ? `${day}-${month}` : `${month}-${day}`;
+
+  return `${date} ${hour}:${minute}`;
 }
 
 function formatAge(diffMs: number): string {

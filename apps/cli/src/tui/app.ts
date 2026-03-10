@@ -112,6 +112,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   let showClosed = true;
   let search = '';
   let snapshot: TuiSnapshot | null = null;
+  let clusterItems: string[] = ['Pick a repository with p'];
+  let clusterIndexById = new Map<number, number>();
   let clusterDetail: TuiClusterDetail | null = null;
   let threadDetail: TuiThreadDetail | null = null;
   let selectedClusterId: number | null = null;
@@ -130,6 +132,24 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   const clearCaches = (): void => {
     clusterDetailCache.clear();
     threadDetailCache.clear();
+  };
+
+  const rebuildClusterItems = (): void => {
+    if (!snapshot) {
+      clusterItems = ['Pick a repository with p'];
+      clusterIndexById = new Map();
+      widgets.clusters.setItems(clusterItems);
+      return;
+    }
+
+    clusterIndexById = new Map();
+    clusterItems = snapshot.clusters.map((cluster, index) => {
+      clusterIndexById.set(cluster.clusterId, index);
+      const updated = formatClusterDateColumn(cluster.latestUpdatedAt);
+      const label = `${String(cluster.totalCount).padStart(3, ' ')}  C${String(cluster.clusterId).padStart(5, ' ')}  ${String(cluster.pullRequestCount).padStart(2, ' ')}P/${String(cluster.issueCount).padStart(2, ' ')}I  ${updated}  ${cluster.displayTitle}`;
+      return cluster.isClosed ? `{gray-fg}${escapeBlessedText(label)}{/gray-fg}` : escapeBlessedText(label);
+    });
+    widgets.clusters.setItems(clusterItems);
   };
 
   const pushActivity = (message: string): void => {
@@ -225,6 +245,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       includeClosedClusters: showClosed,
     });
     selectedClusterId = preserveSelectedId(snapshot.clusters.map((cluster) => cluster.clusterId), previousClusterId);
+    rebuildClusterItems();
 
     if (selectedClusterId !== null) {
       clusterDetail = loadClusterDetail(selectedClusterId);
@@ -284,16 +305,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       `{bold}${repoLabel}{/bold}  {cyan-fg}${snapshot?.stats.openPullRequestCount ?? 0} PR{/cyan-fg}  {green-fg}${snapshot?.stats.openIssueCount ?? 0} issues{/green-fg}  GH:${ghStatus}  Emb:${embedStatus}  Cl:${clusterStatus}  sort:${sortMode}  min:${minSize === 0 ? 'all' : `${minSize}+`}  layout:${wideLayout === 'columns' ? 'cols' : 'stack'}  closed:${showClosed ? 'shown' : 'hidden'}  filter:${search || 'none'}`,
     );
 
-    const clusterItems = snapshot
-      ? snapshot.clusters.map((cluster) => {
-          const updated = formatClusterDateColumn(cluster.latestUpdatedAt);
-          const label = `${String(cluster.totalCount).padStart(3, ' ')}  C${String(cluster.clusterId).padStart(5, ' ')}  ${String(cluster.pullRequestCount).padStart(2, ' ')}P/${String(cluster.issueCount).padStart(2, ' ')}I  ${updated}  ${cluster.displayTitle}`;
-          return cluster.isClosed ? `{gray-fg}${escapeBlessedText(label)}{/gray-fg}` : escapeBlessedText(label);
-        })
-      : ['Pick a repository with p'];
-    widgets.clusters.setItems(clusterItems);
-    const clusterIndex =
-      snapshot && selectedClusterId !== null ? Math.max(0, snapshot.clusters.findIndex((cluster) => cluster.clusterId === selectedClusterId)) : 0;
+    const clusterIndex = snapshot && selectedClusterId !== null ? Math.max(0, clusterIndexById.get(selectedClusterId) ?? -1) : 0;
     widgets.clusters.select(clusterIndex);
 
     widgets.members.setItems(memberRows.length > 0 ? memberRows.map((row) => row.label) : ['No members']);
@@ -599,6 +611,9 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     clearCaches();
     search = '';
     snapshot = null;
+    clusterItems = ['Pick a repository with p'];
+    clusterIndexById = new Map();
+    widgets.clusters.setItems(clusterItems);
     clusterDetail = null;
     threadDetail = null;
     selectedClusterId = null;

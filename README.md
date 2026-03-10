@@ -68,6 +68,18 @@ ghcrawl refresh owner/repo
 
 ![ghcrawl refresh demo](./docs/images/ghcrawl-refresh-demo.gif)
 
+### TUI Screenshots
+
+| User open issue/PR list modal | Refresh modal |
+| --- | --- |
+| ![User open issue and PR list modal](./docs/images/ghcrawl-tui-user-modal.png) | ![GitHub, embed, and cluster refresh modal](./docs/images/ghcrawl-tui-refresh-modal.png) |
+| Press `u` to open the current user's issue and PR list modal. | Press `g` to open the GitHub/embed/cluster refresh modal. |
+
+| Closed members in a cluster | Fully closed cluster |
+| --- | --- |
+| ![Closed cluster members grayed out](./docs/images/ghcrawl-tui-closed-members.png) | ![Completely closed cluster grayed out](./docs/images/ghcrawl-tui-closed-cluster.png) |
+| Closed members stay visible in gray so overlap is still easy to inspect. | A cluster with no open members is grayed out as a whole until you hide closed items. |
+
 ## Controlling The Refresh Flow More Intentionally
 
 Most users should run `ghcrawl refresh owner/repo` and let it do the full pipeline in the right order.

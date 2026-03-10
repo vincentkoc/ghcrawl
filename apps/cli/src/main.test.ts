@@ -16,7 +16,7 @@ test('run prints usage with no command', async () => {
   } as unknown as NodeJS.WritableStream;
 
   await run([], stdout);
-  assert.match(output, /gitcrawl <command>/);
+  assert.match(output, /ghcrawl <command>/);
   assert.match(output, /refresh <owner\/repo>/);
   assert.match(output, /clusters <owner\/repo>/);
   assert.match(output, /cluster-detail <owner\/repo>/);
@@ -34,7 +34,7 @@ test('run prints usage for help flag', async () => {
   } as unknown as NodeJS.WritableStream;
 
   await run(['--help'], stdout);
-  assert.match(output, /gitcrawl <command>/);
+  assert.match(output, /ghcrawl <command>/);
   assert.match(output, /refresh <owner\/repo>/);
   assert.match(output, /tui \[owner\/repo\]/);
   assert.doesNotMatch(output, /summarize <owner\/repo>/);
@@ -66,7 +66,7 @@ test('run prints pretty doctor output on a tty', async () => {
   } as unknown as NodeJS.WritableStream;
 
   await run(['doctor'], stdout);
-  assert.match(output, /gitcrawl doctor/);
+  assert.match(output, /ghcrawl doctor/);
   assert.match(output, /Health/);
   assert.doesNotMatch(output, /^\s*\{/m);
 });
@@ -166,13 +166,16 @@ test('formatDoctorReport renders a human-readable health summary', () => {
   assert.match(rendered, /note: missing/);
 });
 
-test('published cli package exposes a gitcrawl bin shim', () => {
+test('published cli package exposes ghcrawl and gitcrawl bin shims', () => {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const packageJsonPath = path.resolve(here, '..', 'package.json');
   const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { bin?: Record<string, string> };
-  const binPath = packageJson.bin?.gitcrawl;
+  const ghcrawlBinPath = packageJson.bin?.ghcrawl;
+  const gitcrawlBinPath = packageJson.bin?.gitcrawl;
 
-  assert.equal(typeof binPath, 'string');
-  assert.equal(binPath, './bin/gitcrawl.js');
-  assert.equal(existsSync(path.resolve(here, '..', binPath)), true);
+  assert.equal(typeof ghcrawlBinPath, 'string');
+  assert.equal(typeof gitcrawlBinPath, 'string');
+  assert.equal(ghcrawlBinPath, './bin/gitcrawl.js');
+  assert.equal(gitcrawlBinPath, './bin/gitcrawl.js');
+  assert.equal(existsSync(path.resolve(here, '..', ghcrawlBinPath)), true);
 });

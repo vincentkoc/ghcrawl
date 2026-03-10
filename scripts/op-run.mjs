@@ -87,7 +87,7 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(
       [
         'Usage:',
-        '  node scripts/op-run.mjs exec -- <gitcrawl args...>',
+        '  node scripts/op-run.mjs exec -- <ghcrawl args...>',
         '  node scripts/op-run.mjs shell',
         '',
         'Examples:',
@@ -109,9 +109,9 @@ function main(argv = process.argv.slice(2)) {
   if (mode === 'exec') {
     const args = rest[0] === '--' ? rest.slice(1) : rest;
     if (args.length === 0) {
-      throw new Error('Missing gitcrawl arguments. Example: pnpm op:exec -- doctor');
+      throw new Error('Missing ghcrawl arguments. Example: pnpm op:exec -- doctor');
     }
-    runWithEnv('pnpm', ['--filter', '@gitcrawl/cli', 'cli', ...args]);
+    runWithEnv('pnpm', ['--filter', 'ghcrawl', 'cli', ...args]);
     return;
   }
 

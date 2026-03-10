@@ -107,15 +107,15 @@ The product must keep these machine-facing surfaces working:
 
 ### CLI JSON surface
 
-- `gitcrawl doctor --json`
-- `gitcrawl sync owner/repo`
-- `gitcrawl refresh owner/repo`
-- `gitcrawl embed owner/repo`
-- `gitcrawl cluster owner/repo`
-- `gitcrawl clusters owner/repo`
-- `gitcrawl cluster-detail owner/repo --id <cluster-id>`
-- `gitcrawl search owner/repo --query <text>`
-- `gitcrawl neighbors owner/repo --number <thread-number>`
+- `ghcrawl doctor --json`
+- `ghcrawl sync owner/repo`
+- `ghcrawl refresh owner/repo`
+- `ghcrawl embed owner/repo`
+- `ghcrawl cluster owner/repo`
+- `ghcrawl clusters owner/repo`
+- `ghcrawl cluster-detail owner/repo --id <cluster-id>`
+- `ghcrawl search owner/repo --query <text>`
+- `ghcrawl neighbors owner/repo --number <thread-number>`
 
 ### Local HTTP API
 

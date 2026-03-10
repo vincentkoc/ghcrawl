@@ -51,5 +51,5 @@ jobs:
       - name: Publish @gitcrawl/api-core
         run: pnpm --filter @gitcrawl/api-core publish --no-git-checks --access public
 
-      - name: Publish @gitcrawl/cli
-        run: pnpm --filter @gitcrawl/cli publish --no-git-checks --access public
+      - name: Publish ghcrawl
+        run: pnpm --filter ghcrawl publish --no-git-checks --access public

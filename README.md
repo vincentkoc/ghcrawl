@@ -11,16 +11,16 @@
 Install the published CLI package:
 
 ```bash
-npm install -g @gitcrawl/cli
+npm install -g ghcrawl
 ```
 
-That package exposes the `gitcrawl` command directly.
+That package exposes the `ghcrawl` command directly. The old `gitcrawl` command remains as a compatibility alias for now.
 
 If you are working from source or maintaining the repo, use [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Requirements
 
-Normal `gitcrawl` use needs both:
+Normal `ghcrawl` use needs both:
 
 - a GitHub personal access token
 - an OpenAI API key
@@ -30,13 +30,13 @@ GitHub is required to crawl issue and PR data. OpenAI is required for embeddings
 ## Quick Start
 
 ```bash
-gitcrawl init
-gitcrawl doctor
-gitcrawl refresh owner/repo
-gitcrawl tui owner/repo
+ghcrawl init
+ghcrawl doctor
+ghcrawl refresh owner/repo
+ghcrawl tui owner/repo
 ```
 
-`gitcrawl init` runs the setup wizard. It can either:
+`ghcrawl init` runs the setup wizard. It can either:
 
 - save plaintext keys in `~/.config/gitcrawl/config.json`
 - or guide you through a 1Password CLI (`op`) setup that keeps keys out of the config file
@@ -44,22 +44,22 @@ gitcrawl tui owner/repo
 ## Typical Commands
 
 ```bash
-gitcrawl doctor
-gitcrawl sync owner/repo --since 7d
-gitcrawl refresh owner/repo
-gitcrawl embed owner/repo
-gitcrawl cluster owner/repo
-gitcrawl clusters owner/repo --min-size 10 --limit 20
-gitcrawl cluster-detail owner/repo --id 123
-gitcrawl search owner/repo --query "download stalls"
-gitcrawl tui owner/repo
-gitcrawl serve
+ghcrawl doctor
+ghcrawl sync owner/repo --since 7d
+ghcrawl refresh owner/repo
+ghcrawl embed owner/repo
+ghcrawl cluster owner/repo
+ghcrawl clusters owner/repo --min-size 10 --limit 20
+ghcrawl cluster-detail owner/repo --id 123
+ghcrawl search owner/repo --query "download stalls"
+ghcrawl tui owner/repo
+ghcrawl serve
 ```
 
 ### Embed Command Example
 
 ```bash
-gitcrawl embed owner/repo
+ghcrawl embed owner/repo
 ```
 
 <video src="./docs/images/gitcrawl-embed.mp4" controls muted playsinline></video>
@@ -71,8 +71,8 @@ If your Markdown renderer does not show the video inline, open [gitcrawl-embed.m
 First run:
 
 ```bash
-gitcrawl init
-gitcrawl doctor
+ghcrawl init
+ghcrawl doctor
 ```
 
 `init` behavior:
@@ -107,19 +107,19 @@ GitHub token guidance:
 If you choose 1Password CLI mode, init shows a `~/.zshrc` helper like this:
 
 ```bash
-gitcrawl-op() {
-  env GITHUB_TOKEN="$(op read 'op://Private/gitcrawl/GITHUB_TOKEN')" \
-      OPENAI_API_KEY="$(op read 'op://Private/gitcrawl/OPENAI_API_KEY')" \
-      gitcrawl "$@"
+ghcrawl-op() {
+  env GITHUB_TOKEN="$(op read 'op://Private/ghcrawl/GITHUB_TOKEN')" \
+      OPENAI_API_KEY="$(op read 'op://Private/ghcrawl/OPENAI_API_KEY')" \
+      ghcrawl "$@"
 }
 ```
 
 Then use:
 
 ```bash
-gitcrawl-op doctor
-gitcrawl-op tui
-gitcrawl-op sync owner/repo
+ghcrawl-op doctor
+ghcrawl-op tui
+ghcrawl-op sync owner/repo
 ```
 
 ## Cost To Operate
@@ -141,10 +141,10 @@ For installation and usage conventions, point users at [vercel-labs/skills](http
 The skill is built around the stable JSON CLI surface:
 
 ```bash
-gitcrawl doctor --json
-gitcrawl refresh owner/repo
-gitcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent
-gitcrawl cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280
+ghcrawl doctor --json
+ghcrawl refresh owner/repo
+ghcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent
+ghcrawl cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280
 ```
 
 The agent and build contract for this repo lives in [SPEC.md](./SPEC.md).

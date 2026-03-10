@@ -41,6 +41,6 @@ This repo uses tag-driven releases from the GitHub Releases UI.
 - The publish workflow rewrites workspace versions from that tag during the workflow run, runs typecheck/tests/package smoke, and then publishes:
   - `@gitcrawl/api-contract`
   - `@gitcrawl/api-core`
-  - `@gitcrawl/cli`
+  - `ghcrawl`
 
 CI also runs a package smoke check on pull requests and `main` by packing the publishable packages, installing them into a temporary project, and executing the packaged CLI.

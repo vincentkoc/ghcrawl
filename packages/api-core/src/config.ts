@@ -392,10 +392,10 @@ export function requireGithubToken(config: GitcrawlConfig): string {
   if (!config.githubToken) {
     if (config.secretProvider === 'op' && config.opVaultName && config.opItemName) {
       throw new Error(
-        `Missing GitHub token in the environment. This config is set to use 1Password CLI via ${config.opVaultName}/${config.opItemName}; run gitcrawl through your op wrapper or set GITHUB_TOKEN. Expected config at ${config.configPath}`,
+        `Missing GitHub token in the environment. This config is set to use 1Password CLI via ${config.opVaultName}/${config.opItemName}; run ghcrawl through your op wrapper or set GITHUB_TOKEN. Expected config at ${config.configPath}`,
       );
     }
-    throw new Error(`Missing GitHub token. Run gitcrawl init or set GITHUB_TOKEN. Expected config at ${config.configPath}`);
+    throw new Error(`Missing GitHub token. Run ghcrawl init or set GITHUB_TOKEN. Expected config at ${config.configPath}`);
   }
   return config.githubToken;
 }
@@ -404,10 +404,10 @@ export function requireOpenAiKey(config: GitcrawlConfig): string {
   if (!config.openaiApiKey) {
     if (config.secretProvider === 'op' && config.opVaultName && config.opItemName) {
       throw new Error(
-        `Missing OpenAI API key in the environment. This config is set to use 1Password CLI via ${config.opVaultName}/${config.opItemName}; run gitcrawl through your op wrapper or set OPENAI_API_KEY. Expected config at ${config.configPath}`,
+        `Missing OpenAI API key in the environment. This config is set to use 1Password CLI via ${config.opVaultName}/${config.opItemName}; run ghcrawl through your op wrapper or set OPENAI_API_KEY. Expected config at ${config.configPath}`,
       );
     }
-    throw new Error(`Missing OpenAI API key. Run gitcrawl init or set OPENAI_API_KEY. Expected config at ${config.configPath}`);
+    throw new Error(`Missing OpenAI API key. Run ghcrawl init or set OPENAI_API_KEY. Expected config at ${config.configPath}`);
   }
   return config.openaiApiKey;
 }

@@ -26,7 +26,7 @@ type DoctorResult = Awaited<ReturnType<GitcrawlService['doctor']>>;
 
 function usage(devMode = false): string {
   const lines = [
-    'gitcrawl <command> [options]',
+    'ghcrawl <command> [options]',
     '',
     'Commands:',
     '  init [--reconfigure]',
@@ -184,7 +184,7 @@ function parsePositiveInteger(name: string, value: string): number {
 
 export function formatDoctorReport(result: DoctorResult): string {
   const lines = [
-    'gitcrawl doctor',
+    'ghcrawl doctor',
     '',
     'Health',
     `  ok: ${formatBooleanStatus(result.health.ok)}`,
@@ -419,7 +419,7 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
         });
         const port = typeof parsed.values.port === 'string' ? Number(parsed.values.port) : serviceForServe.config.apiPort;
         server.listen(port, '127.0.0.1');
-        stdout.write(`gitcrawl API listening on http://127.0.0.1:${port}\n`);
+        stdout.write(`ghcrawl API listening on http://127.0.0.1:${port}\n`);
         const stop = async () => {
           server.close();
           serviceForServe.close();

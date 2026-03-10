@@ -1,12 +1,12 @@
 ---
 name: gitcrawl
 description: "Use a local gitcrawl install to refresh GitHub repo data, inspect duplicate clusters, and dump issue/PR summaries from the local SQLite dataset. Use when a user wants to triage related issues or PRs, inspect semantic clusters, or refresh one repo through gitcrawl's staged pipeline."
-allowed-tools: Bash(gitcrawl:*), Bash(pnpm:*), Read(*)
+allowed-tools: Bash(ghcrawl:*), Bash(gitcrawl:*), Bash(pnpm:*), Read(*)
 ---
 
 # gitcrawl
 
-Use `gitcrawl` as the machine-facing interface for local GitHub duplicate-cluster analysis.
+Use `ghcrawl` as the machine-facing interface for local GitHub duplicate-cluster analysis.
 
 Do not scrape the TUI. Prefer JSON CLI output.
 
@@ -18,12 +18,12 @@ Do not scrape the TUI. Prefer JSON CLI output.
 
 ## Command preference
 
-Prefer the installed `gitcrawl` bin.
+Prefer the installed `ghcrawl` bin.
 
-If `gitcrawl` is not on `PATH`, use:
+If `ghcrawl` is not on `PATH`, try `gitcrawl`. If neither is on `PATH`, use:
 
 ```bash
-pnpm --filter @gitcrawl/cli cli ...
+pnpm --filter ghcrawl cli ...
 ```
 
 ## Core workflow
@@ -33,13 +33,13 @@ pnpm --filter @gitcrawl/cli cli ...
 Run:
 
 ```bash
-gitcrawl doctor --json
+ghcrawl doctor --json
 ```
 
 If the bin is unavailable, fall back to:
 
 ```bash
-pnpm --filter @gitcrawl/cli cli doctor --json
+pnpm --filter ghcrawl cli doctor --json
 ```
 
 ### 2. Refresh local data when needed
@@ -47,7 +47,7 @@ pnpm --filter @gitcrawl/cli cli doctor --json
 Use the staged pipeline command:
 
 ```bash
-gitcrawl refresh owner/repo
+ghcrawl refresh owner/repo
 ```
 
 This runs, in fixed order:
@@ -59,8 +59,8 @@ This runs, in fixed order:
 You may skip steps only when the user explicitly wants that or the freshness state makes it unnecessary:
 
 ```bash
-gitcrawl refresh owner/repo --no-sync
-gitcrawl refresh owner/repo --no-cluster
+ghcrawl refresh owner/repo --no-sync
+ghcrawl refresh owner/repo --no-cluster
 ```
 
 ### 3. List clusters
@@ -68,7 +68,7 @@ gitcrawl refresh owner/repo --no-cluster
 Use:
 
 ```bash
-gitcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent
+ghcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent
 ```
 
 This returns:
@@ -82,7 +82,7 @@ This returns:
 Use:
 
 ```bash
-gitcrawl cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280
+ghcrawl cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280
 ```
 
 This returns:
@@ -97,8 +97,8 @@ This returns:
 Use search or neighbors as needed:
 
 ```bash
-gitcrawl search owner/repo --query "download stalls" --mode hybrid
-gitcrawl neighbors owner/repo --number 42 --limit 10
+ghcrawl search owner/repo --query "download stalls" --mode hybrid
+ghcrawl neighbors owner/repo --number 42 --limit 10
 ```
 
 ## Output rules

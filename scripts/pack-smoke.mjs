@@ -47,7 +47,11 @@ try {
   );
 
   exec('npm', ['install', '--no-package-lock', ...tarballs], installDir);
-  exec('node', ['./node_modules/@gitcrawl/cli/bin/gitcrawl.js', '--help'], installDir);
+  const cliManifest = packageManifests.find((manifest) => manifest.name === 'ghcrawl');
+  if (!cliManifest || !cliManifest.bin || typeof cliManifest.bin.ghcrawl !== 'string') {
+    throw new Error('Expected ghcrawl package with a ghcrawl bin');
+  }
+  exec('node', [path.join('node_modules', cliManifest.name, cliManifest.bin.ghcrawl), '--help'], installDir);
 
   process.stdout.write(`pack smoke ok (${tempRoot})\n`);
 } finally {

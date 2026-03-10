@@ -804,7 +804,7 @@ export function renderDetailPane(
   focusPane: TuiFocusPane,
 ): string {
   if (!clusterDetail) {
-    return 'No cluster selected.\n\nRun `gitcrawl cluster owner/repo` if you have not clustered this repository yet.';
+    return 'No cluster selected.\n\nRun `ghcrawl cluster owner/repo` if you have not clustered this repository yet.';
   }
   if (!threadDetail) {
     return `{bold}${escapeBlessedText(clusterDetail.displayTitle)}{/bold}\n\nSelect a member to inspect thread details.`;

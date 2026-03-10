@@ -447,10 +447,10 @@ export class GitcrawlService {
       error: null as string | null,
     };
     if (!github.configured && this.config.secretProvider === 'op' && this.config.opVaultName && this.config.opItemName) {
-      github.error = `Configured for 1Password CLI via ${this.config.opVaultName}/${this.config.opItemName}; run gitcrawl through your op wrapper so GITHUB_TOKEN is present in the environment.`;
+      github.error = `Configured for 1Password CLI via ${this.config.opVaultName}/${this.config.opItemName}; run ghcrawl through your op wrapper so GITHUB_TOKEN is present in the environment.`;
     }
     if (!openai.configured && this.config.secretProvider === 'op' && this.config.opVaultName && this.config.opItemName) {
-      openai.error = `Configured for 1Password CLI via ${this.config.opVaultName}/${this.config.opItemName}; run gitcrawl through your op wrapper so OPENAI_API_KEY is present in the environment.`;
+      openai.error = `Configured for 1Password CLI via ${this.config.opVaultName}/${this.config.opItemName}; run ghcrawl through your op wrapper so OPENAI_API_KEY is present in the environment.`;
     }
     if (github.configured) {
       if (!github.formatOk) {

@@ -4,11 +4,11 @@ Use the JSON CLI surface. Do not parse the TUI.
 
 ## Commands
 
-### `gitcrawl doctor --json`
+### `ghcrawl doctor --json`
 
 Health and auth smoke check.
 
-### `gitcrawl refresh owner/repo`
+### `ghcrawl refresh owner/repo`
 
 Runs the staged pipeline in fixed order:
 
@@ -22,7 +22,7 @@ Optional skips:
 - `--no-embed`
 - `--no-cluster`
 
-### `gitcrawl clusters owner/repo`
+### `ghcrawl clusters owner/repo`
 
 Useful flags:
 
@@ -49,7 +49,7 @@ Each cluster includes:
 - `representativeNumber`
 - `representativeKind`
 
-### `gitcrawl cluster-detail owner/repo --id <cluster-id>`
+### `ghcrawl cluster-detail owner/repo --id <cluster-id>`
 
 Useful flags:
 
@@ -76,29 +76,29 @@ Each member includes:
 - `maintainer_signal_summary`
 - `dedupe_summary`
 
-### `gitcrawl search owner/repo --query <text>`
+### `ghcrawl search owner/repo --query <text>`
 
 Useful for semantic or keyword follow-up.
 
-### `gitcrawl neighbors owner/repo --number <thread-number>`
+### `ghcrawl neighbors owner/repo --number <thread-number>`
 
 Useful for inspecting nearest semantic matches for one thread.
 
 ## Fallback invocation
 
-If `gitcrawl` is not installed globally:
+If `ghcrawl` is not installed globally:
 
 ```bash
-pnpm --filter @gitcrawl/cli cli doctor --json
-pnpm --filter @gitcrawl/cli cli refresh owner/repo
-pnpm --filter @gitcrawl/cli cli clusters owner/repo --min-size 10 --limit 20 --sort recent
-pnpm --filter @gitcrawl/cli cli cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280
+pnpm --filter ghcrawl cli doctor --json
+pnpm --filter ghcrawl cli refresh owner/repo
+pnpm --filter ghcrawl cli clusters owner/repo --min-size 10 --limit 20 --sort recent
+pnpm --filter ghcrawl cli cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280
 ```
 
 ## Suggested analysis flow
 
-1. `doctor --json`
-2. `refresh owner/repo`
-3. `clusters owner/repo --min-size 10 --limit 20 --sort recent`
-4. `cluster-detail owner/repo --id <cluster-id>`
+1. `ghcrawl doctor --json`
+2. `ghcrawl refresh owner/repo`
+3. `ghcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent`
+4. `ghcrawl cluster-detail owner/repo --id <cluster-id>`
 5. optionally `search` or `neighbors`

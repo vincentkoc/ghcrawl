@@ -1,5 +1,5 @@
 {
-  "name": "@gitcrawl/cli",
+  "name": "ghcrawl",
   "version": "0.0.0",
   "type": "module",
   "description": "Gitcrawl terminal UI and CLI runtime",
@@ -14,6 +14,7 @@
     "url": "git+https://github.com/pwrdrvr/gitcrawl.git"
   },
   "keywords": [
+    "ghcrawl",
     "gitcrawl",
     "github",
     "cli",
@@ -32,6 +33,7 @@
     "access": "public"
   },
   "bin": {
+    "ghcrawl": "./bin/gitcrawl.js",
     "gitcrawl": "./bin/gitcrawl.js"
   },
   "scripts": {

@@ -78,8 +78,8 @@ Common commands:
 - `pnpm typecheck`
 - `pnpm test`
 - targeted CLI smoke tests via:
-  - `pnpm --filter @gitcrawl/cli cli doctor`
-  - `pnpm --filter @gitcrawl/cli cli sync openclaw/openclaw --limit 1`
+  - `pnpm --filter ghcrawl cli doctor`
+  - `pnpm --filter ghcrawl cli sync openclaw/openclaw --limit 1`
 
 If a change affects OpenAI-backed paths, avoid unnecessary live spend unless the user wants a real run.
 

@@ -81,17 +81,17 @@ export async function runInitWizard(
 
   const isInteractive = options.isInteractive ?? (process.stdin.isTTY && process.stdout.isTTY);
   if (!isInteractive) {
-    throw new Error(`gitcrawl init requires a TTY. Create ${current.configPath} manually or set environment variables first.`);
+    throw new Error(`ghcrawl init requires a TTY. Create ${current.configPath} manually or set environment variables first.`);
   }
 
-  await prompter.intro('gitcrawl init');
+  await prompter.intro('ghcrawl init');
   await prompter.note(
     [
       `Config file: ${current.configPath}`,
       '',
       'Secret storage modes:',
       '- Plaintext config: writes both keys to ~/.config/gitcrawl/config.json',
-      '- 1Password CLI: keeps keys out of the config file and expects you to run gitcrawl through an op wrapper',
+      '- 1Password CLI: keeps keys out of the config file and expects you to run ghcrawl through an op wrapper',
       '',
       'GitHub token recommendation:',
       '- Fine-grained PAT scoped to the repos you want to crawl',
@@ -108,7 +108,7 @@ export async function runInitWizard(
   let changed = false;
 
   const secretMode = await prompter.select({
-    message: 'How should gitcrawl get your GitHub and OpenAI secrets?',
+    message: 'How should ghcrawl get your GitHub and OpenAI secrets?',
     initialValue: stored.data.secretProvider ?? (hasStoredGithub && hasStoredOpenAi ? 'plaintext' : 'op'),
     options: [
       {
@@ -227,7 +227,7 @@ export async function runInitWizard(
       prompter.cancel('init cancelled');
       throw new Error('init cancelled');
     }
-    const defaultItemName = stored.data.opItemName ?? 'gitcrawl';
+    const defaultItemName = stored.data.opItemName ?? 'ghcrawl';
     const itemNameInput = await prompter.text({
       message: '1Password item name',
       placeholder: defaultItemName,
@@ -273,23 +273,23 @@ export async function runInitWizard(
 
     await prompter.note(
       [
-        'After saving that Secure Note, run gitcrawl through an op-backed shell helper:',
+        'After saving that Secure Note, run ghcrawl through an op-backed shell helper:',
         '',
-        'gitcrawl-op() {',
+        'ghcrawl-op() {',
         `  env GITHUB_TOKEN=\"$(op read '${opReferenceBase}/GITHUB_TOKEN')\" \\`,
         `      OPENAI_API_KEY=\"$(op read '${opReferenceBase}/OPENAI_API_KEY')\" \\`,
-        '      gitcrawl "$@"',
+        '      ghcrawl "$@"',
         '}',
         '',
         'Examples:',
-        '- gitcrawl-op doctor',
-        '- gitcrawl-op tui',
-        '- gitcrawl-op sync org/repo',
+        '- ghcrawl-op doctor',
+        '- ghcrawl-op tui',
+        '- ghcrawl-op sync org/repo',
       ].join('\n'),
       'Next Commands',
     );
     const readyCommands = await prompter.confirm({
-      message: 'I copied those commands and I am ready to save this gitcrawl config.',
+      message: 'I copied those commands and I am ready to save this ghcrawl config.',
       initialValue: true,
     });
     if (isCancel(readyCommands) || readyCommands !== true) {
@@ -309,7 +309,7 @@ export async function runInitWizard(
     'Responsibility',
   );
   const acceptResponsibility = await prompter.confirm({
-    message: 'I understand and accept full responsibility for using gitcrawl and for securing any API keys it uses.',
+    message: 'I understand and accept full responsibility for using ghcrawl and for securing any API keys it uses.',
     initialValue: false,
   });
   if (isCancel(acceptResponsibility) || acceptResponsibility !== true) {

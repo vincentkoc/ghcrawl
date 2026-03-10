@@ -114,7 +114,7 @@ test('runInitWizard can configure 1Password CLI metadata without persisting plai
     env,
     prompter: makePrompter({
       select: async () => 'op',
-      text: async ({ message }) => (message.includes('vault') ? 'Private' : 'gitcrawl'),
+      text: async ({ message }) => (message.includes('vault') ? 'Private' : 'ghcrawl'),
       note: async (message, title) => {
         notes.push({ title, message });
       },
@@ -130,16 +130,16 @@ test('runInitWizard can configure 1Password CLI metadata without persisting plai
   const persisted = readPersistedConfig({ env });
   assert.equal(persisted.data.secretProvider, 'op');
   assert.equal(persisted.data.opVaultName, 'Private');
-  assert.equal(persisted.data.opItemName, 'gitcrawl');
+  assert.equal(persisted.data.opItemName, 'ghcrawl');
   assert.equal(persisted.data.githubToken, undefined);
   assert.equal(persisted.data.openaiApiKey, undefined);
   assert.equal(
-    notes.some((entry) => entry.title === '1Password Setup' && entry.message.includes('op://Private/gitcrawl/GITHUB_TOKEN')),
+    notes.some((entry) => entry.title === '1Password Setup' && entry.message.includes('op://Private/ghcrawl/GITHUB_TOKEN')),
     true,
   );
-  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op()')), true);
-  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op doctor')), true);
-  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op sync org/repo')), true);
+  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('ghcrawl-op()')), true);
+  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('ghcrawl-op doctor')), true);
+  assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('ghcrawl-op sync org/repo')), true);
   assert.equal(notes.some((entry) => entry.title === 'Responsibility' && entry.message.includes('accept no liability')), true);
   assert.equal(confirms.some((message) => message.includes('I created the Secure Note')), true);
   assert.equal(confirms.some((message) => message.includes('I copied those commands')), true);
@@ -162,7 +162,7 @@ test('runInitWizard accepts empty 1Password vault and item input as defaults', a
 
   const persisted = readPersistedConfig({ env });
   assert.equal(persisted.data.opVaultName, 'Private');
-  assert.equal(persisted.data.opItemName, 'gitcrawl');
+  assert.equal(persisted.data.opItemName, 'ghcrawl');
 });
 
 test('runInitWizard accepts undefined 1Password text responses as defaults', async () => {
@@ -181,5 +181,5 @@ test('runInitWizard accepts undefined 1Password text responses as defaults', asy
 
   const persisted = readPersistedConfig({ env });
   assert.equal(persisted.data.opVaultName, 'Private');
-  assert.equal(persisted.data.opItemName, 'gitcrawl');
+  assert.equal(persisted.data.opItemName, 'ghcrawl');
 });

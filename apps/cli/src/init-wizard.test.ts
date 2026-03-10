@@ -140,8 +140,10 @@ test('runInitWizard can configure 1Password CLI metadata without persisting plai
   assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op()')), true);
   assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op doctor')), true);
   assert.equal(notes.some((entry) => entry.title === 'Next Commands' && entry.message.includes('gitcrawl-op sync org/repo')), true);
+  assert.equal(notes.some((entry) => entry.title === 'Responsibility' && entry.message.includes('accept no liability')), true);
   assert.equal(confirms.some((message) => message.includes('I created the Secure Note')), true);
   assert.equal(confirms.some((message) => message.includes('I copied those commands')), true);
+  assert.equal(confirms.some((message) => message.includes('accept full responsibility')), true);
 });
 
 test('runInitWizard accepts empty 1Password vault and item input as defaults', async () => {

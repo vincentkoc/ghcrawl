@@ -228,3 +228,15 @@ For local development, repo-root `.env.local` is still accepted as a fallback, b
 - if you add a brand-new repo from the TUI with `p`, gitcrawl runs sync -> embed -> cluster and opens that repo with min cluster size `1+` so you can see everything immediately.
 - sync now pauses between 100-thread batches and uses stronger rate-limit backoff, but a long crawl can still hit GitHub limits.
 - For a first pass on a large repository, prefer `sync --since <iso-timestamp>` before doing a full backfill.
+
+## Responsibility Attestation
+
+By operating `gitcrawl`, you accept that you, and any employer or organization you operate it for, are fully responsible for:
+
+- obtaining GitHub and OpenAI API keys through legitimate means
+- monitoring that your use of this tool complies with the agreements, usage terms, and platform policies that apply to those keys
+- storing those API keys securely
+- any misuse, theft, unexpected charges, or other consequences resulting from those keys being exposed or abused
+- monitoring spend and stopping or reconfiguring the tool if usage is higher than you intended
+
+The creators and contributors of `gitcrawl` accept no liability for API charges, account actions, policy violations, data loss, or misuse resulting from operation of this tool.

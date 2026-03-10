@@ -298,6 +298,25 @@ export async function runInitWizard(
     }
   }
 
+  await prompter.note(
+    [
+      'Responsibility attestation:',
+      '- You are responsible for obtaining and using GitHub and OpenAI API keys in compliance with the agreements and usage policies for those platforms.',
+      '- You and any employer or organization you operate this tool for accept full responsibility for monitoring API usage, spend, and access.',
+      '- You are fully responsible for storing your API keys securely and for any misuse, theft, or unexpected spend caused by those keys.',
+      '- The creators and contributors of gitcrawl accept no liability for API charges, account actions, data loss, or misuse resulting from operation of this tool.',
+    ].join('\n'),
+    'Responsibility',
+  );
+  const acceptResponsibility = await prompter.confirm({
+    message: 'I understand and accept full responsibility for using gitcrawl and for securing any API keys it uses.',
+    initialValue: false,
+  });
+  if (isCancel(acceptResponsibility) || acceptResponsibility !== true) {
+    prompter.cancel('init cancelled');
+    throw new Error('init cancelled');
+  }
+
   const result = writePersistedConfig(nextConfig, { cwd, env });
   await prompter.outro(`Saved gitcrawl config to ${result.configPath}`);
   return { configPath: result.configPath, changed };

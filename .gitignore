@@ -5,3 +5,4 @@ coverage/
 data/
 tmp/
 ui/dist/
+**/.DS_Store

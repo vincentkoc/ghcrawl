@@ -1110,6 +1110,130 @@ test('listNeighbors returns exact nearest neighbors for an embedded thread', () 
   }
 });
 
+test('clusterRepository emits timed progress updates while identifying similarities', () => {
+  const messages: string[] = [];
+  const originalDateNow = Date.now;
+  let fakeNow = 0;
+  Date.now = () => {
+    fakeNow += 6000;
+    return fakeNow;
+  };
+
+  const service = makeTestService({
+    checkAuth: async () => undefined,
+    getRepo: async () => ({}),
+    listRepositoryIssues: async () => [],
+    getIssue: async () => ({}),
+    getPull: async () => ({}),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+  });
+
+  try {
+    const now = '2026-03-09T00:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+
+    const insertThread = service.db.prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertThread.run(10, 1, '100', 42, 'issue', 'open', 'Downloader hangs', 'The transfer never finishes.', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, now, null, null, now, now, now);
+    insertThread.run(11, 1, '101', 43, 'pull_request', 'open', 'Fix downloader hang', 'Implements a fix.', 'bob', 'User', 'https://github.com/openclaw/openclaw/pull/43', '[]', '[]', '{}', 'hash-43', 0, now, now, null, null, now, now, now);
+    insertThread.run(12, 1, '102', 44, 'issue', 'open', 'Downloader retries', 'Retries are broken.', 'carol', 'User', 'https://github.com/openclaw/openclaw/issues/44', '[]', '[]', '{}', 'hash-44', 0, now, now, null, null, now, now, now);
+
+    const insertEmbedding = service.db.prepare(
+      `insert into document_embeddings (thread_id, source_kind, model, dimensions, content_hash, embedding_json, created_at, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const sourceKind of ['title', 'body', 'dedupe_summary'] as const) {
+      insertEmbedding.run(10, sourceKind, 'text-embedding-3-large', 2, `hash-42-${sourceKind}`, '[1,0]', now, now);
+      insertEmbedding.run(11, sourceKind, 'text-embedding-3-large', 2, `hash-43-${sourceKind}`, '[0.99,0.01]', now, now);
+      insertEmbedding.run(12, sourceKind, 'text-embedding-3-large', 2, `hash-44-${sourceKind}`, '[0.98,0.02]', now, now);
+    }
+
+    const result = service.clusterRepository({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      onProgress: (message) => messages.push(message),
+    });
+
+    assert.ok(result.edges > 0);
+    assert.ok(messages.some((message) => /identifying similarity edges/.test(message)));
+  } finally {
+    Date.now = originalDateNow;
+    service.close();
+  }
+});
+
+test('clusterRepository prunes older cluster runs for the repo after a successful rebuild', () => {
+  const service = makeTestService({
+    checkAuth: async () => undefined,
+    getRepo: async () => ({}),
+    listRepositoryIssues: async () => [],
+    getIssue: async () => ({}),
+    getPull: async () => ({}),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+  });
+
+  try {
+    const now = '2026-03-09T00:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+
+    const insertThread = service.db.prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertThread.run(10, 1, '100', 42, 'issue', 'open', 'Downloader hangs', 'The transfer never finishes.', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, now, null, null, now, now, now);
+    insertThread.run(11, 1, '101', 43, 'pull_request', 'open', 'Fix downloader hang', 'Implements a fix.', 'bob', 'User', 'https://github.com/openclaw/openclaw/pull/43', '[]', '[]', '{}', 'hash-43', 0, now, now, null, null, now, now, now);
+
+    service.db
+      .prepare(`insert into cluster_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 'openclaw/openclaw', 'completed', now, now);
+    service.db
+      .prepare(`insert into similarity_edges (repo_id, cluster_run_id, left_thread_id, right_thread_id, method, score, explanation_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 10, 11, 'exact_cosine', 0.9, '{}', now);
+
+    const insertEmbedding = service.db.prepare(
+      `insert into document_embeddings (thread_id, source_kind, model, dimensions, content_hash, embedding_json, created_at, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertEmbedding.run(10, 'title', 'text-embedding-3-large', 2, 'hash-42-title', '[1,0]', now, now);
+    insertEmbedding.run(11, 'title', 'text-embedding-3-large', 2, 'hash-43-title', '[0.99,0.01]', now, now);
+
+    const result = service.clusterRepository({
+      owner: 'openclaw',
+      repo: 'openclaw',
+    });
+
+    const runRows = service.db.prepare('select id from cluster_runs where repo_id = ? order by id asc').all(1) as Array<{ id: number }>;
+    const oldEdgeCount = service.db.prepare('select count(*) as count from similarity_edges where cluster_run_id = 1').get() as { count: number };
+
+    assert.deepEqual(runRows.map((row) => row.id), [result.runId]);
+    assert.equal(oldEdgeCount.count, 0);
+  } finally {
+    service.close();
+  }
+});
+
 test('tui snapshot returns mixed issue and pull request counts with default recent sort and filters', () => {
   const service = makeTestService({
     checkAuth: async () => undefined,

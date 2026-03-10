@@ -240,6 +240,7 @@ type NeighborsResultInternal = NeighborsResponse;
 const SYNC_BATCH_SIZE = 100;
 const SYNC_BATCH_DELAY_MS = 5000;
 const STALE_CLOSED_SWEEP_LIMIT = 1000;
+const CLUSTER_PROGRESS_INTERVAL_MS = 5000;
 const EMBED_ESTIMATED_CHARS_PER_TOKEN = 3;
 const EMBED_MAX_ITEM_TOKENS = 7000;
 const EMBED_MAX_BATCH_TOKENS = 250000;
@@ -874,33 +875,16 @@ export class GHCrawlService {
       params.onProgress?.(
         `[cluster] loaded ${items.length} embedded thread(s) across ${new Set(rows.map((row) => row.source_kind)).size} source kind(s) for ${repository.fullName} k=${k} minScore=${minScore}`,
       );
-
-      this.db.prepare('delete from cluster_members where cluster_id in (select id from clusters where cluster_run_id = ?)').run(runId);
-      this.db.prepare('delete from clusters where cluster_run_id = ?').run(runId);
-      this.db.prepare('delete from similarity_edges where cluster_run_id = ?').run(runId);
-
-      const aggregatedEdges = this.aggregateRepositoryEdges(rows, { limit: k, minScore });
+      const aggregatedEdges = this.aggregateRepositoryEdges(rows, {
+        limit: k,
+        minScore,
+        onProgress: params.onProgress,
+      });
       const edges = Array.from(aggregatedEdges.values()).map((entry) => ({
         leftThreadId: entry.leftThreadId,
         rightThreadId: entry.rightThreadId,
         score: entry.score,
       }));
-      const insertEdge = this.db.prepare(
-        `insert into similarity_edges (repo_id, cluster_run_id, left_thread_id, right_thread_id, method, score, explanation_json, created_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
-      for (const edge of aggregatedEdges.values()) {
-        insertEdge.run(
-          repository.id,
-          runId,
-          edge.leftThreadId,
-          edge.rightThreadId,
-          'exact_cosine',
-          edge.score,
-          asJson({ sources: Array.from(edge.sourceKinds).sort(), model: this.config.embedModel }),
-          nowIso(),
-        );
-      }
 
       params.onProgress?.(`[cluster] built ${edges.length} similarity edge(s)`);
 
@@ -908,31 +892,10 @@ export class GHCrawlService {
         items.map((item) => ({ threadId: item.id, number: item.number, title: item.title })),
         edges,
       );
+      this.persistClusterRun(repository.id, runId, aggregatedEdges, clusters);
+      this.pruneOldClusterRuns(repository.id, runId);
 
-      const insertCluster = this.db.prepare(
-        'insert into clusters (repo_id, cluster_run_id, representative_thread_id, member_count, created_at) values (?, ?, ?, ?, ?)',
-      );
-      const insertMember = this.db.prepare(
-        'insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at) values (?, ?, ?, ?)',
-      );
-
-      for (const cluster of clusters) {
-        const clusterResult = insertCluster.run(
-          repository.id,
-          runId,
-          cluster.representativeThreadId,
-          cluster.members.length,
-          nowIso(),
-        );
-        const clusterId = Number(clusterResult.lastInsertRowid);
-        for (const memberId of cluster.members) {
-          const key = this.edgeKey(cluster.representativeThreadId, memberId);
-          const score = memberId === cluster.representativeThreadId ? null : (aggregatedEdges.get(key)?.score ?? null);
-          insertMember.run(clusterId, memberId, score, nowIso());
-        }
-      }
-
-      params.onProgress?.(`[cluster] persisted ${clusters.length} cluster(s)`);
+      params.onProgress?.(`[cluster] persisted ${clusters.length} cluster(s) and pruned older cluster runs`);
 
       this.finishRun('cluster_runs', runId, 'completed', { edges: edges.length, clusters: clusters.length });
       return clusterResultSchema.parse({ runId, edges: edges.length, clusters: clusters.length });
@@ -2490,7 +2453,7 @@ export class GHCrawlService {
 
   private aggregateRepositoryEdges(
     rows: ParsedStoredEmbeddingRow[],
-    params: { limit: number; minScore: number },
+    params: { limit: number; minScore: number; onProgress?: (message: string) => void },
   ): Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }> {
     const bySource = new Map<EmbeddingSourceKind, Array<{ id: number; embedding: number[] }>>();
     for (const row of rows) {
@@ -2500,6 +2463,9 @@ export class GHCrawlService {
     }
 
     const aggregated = new Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }>();
+    const totalItems = Array.from(bySource.values()).reduce((sum, items) => sum + items.length, 0);
+    let processedItems = 0;
+    let lastProgressAt = Date.now();
     for (const [sourceKind, items] of bySource.entries()) {
       for (const item of items) {
         const neighbors = rankNearestNeighbors(items, {
@@ -2523,10 +2489,76 @@ export class GHCrawlService {
             sourceKinds: new Set([sourceKind]),
           });
         }
+        processedItems += 1;
+        const now = Date.now();
+        if (params.onProgress && now - lastProgressAt >= CLUSTER_PROGRESS_INTERVAL_MS) {
+          params.onProgress(
+            `[cluster] identifying similarity edges ${processedItems}/${totalItems} source embeddings processed current_edges=${aggregated.size}`,
+          );
+          lastProgressAt = now;
+        }
       }
     }
 
     return aggregated;
+  }
+
+  private persistClusterRun(
+    repoId: number,
+    runId: number,
+    aggregatedEdges: Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }>,
+    clusters: Array<{ representativeThreadId: number; members: number[] }>,
+  ): void {
+    const insertEdge = this.db.prepare(
+      `insert into similarity_edges (repo_id, cluster_run_id, left_thread_id, right_thread_id, method, score, explanation_json, created_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertCluster = this.db.prepare(
+      'insert into clusters (repo_id, cluster_run_id, representative_thread_id, member_count, created_at) values (?, ?, ?, ?, ?)',
+    );
+    const insertMember = this.db.prepare(
+      'insert into cluster_members (cluster_id, thread_id, score_to_representative, created_at) values (?, ?, ?, ?)',
+    );
+
+    this.db.transaction(() => {
+      this.db.prepare('delete from cluster_members where cluster_id in (select id from clusters where cluster_run_id = ?)').run(runId);
+      this.db.prepare('delete from clusters where cluster_run_id = ?').run(runId);
+      this.db.prepare('delete from similarity_edges where cluster_run_id = ?').run(runId);
+
+      const createdAt = nowIso();
+      for (const edge of aggregatedEdges.values()) {
+        insertEdge.run(
+          repoId,
+          runId,
+          edge.leftThreadId,
+          edge.rightThreadId,
+          'exact_cosine',
+          edge.score,
+          asJson({ sources: Array.from(edge.sourceKinds).sort(), model: this.config.embedModel }),
+          createdAt,
+        );
+      }
+
+      for (const cluster of clusters) {
+        const clusterResult = insertCluster.run(
+          repoId,
+          runId,
+          cluster.representativeThreadId,
+          cluster.members.length,
+          createdAt,
+        );
+        const clusterId = Number(clusterResult.lastInsertRowid);
+        for (const memberId of cluster.members) {
+          const key = this.edgeKey(cluster.representativeThreadId, memberId);
+          const score = memberId === cluster.representativeThreadId ? null : (aggregatedEdges.get(key)?.score ?? null);
+          insertMember.run(clusterId, memberId, score, createdAt);
+        }
+      }
+    })();
+  }
+
+  private pruneOldClusterRuns(repoId: number, keepRunId: number): void {
+    this.db.prepare('delete from cluster_runs where repo_id = ? and id <> ?').run(repoId, keepRunId);
   }
 
   private upsertSummary(threadId: number, contentHash: string, summaryKind: string, summaryText: string): void {

@@ -237,7 +237,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     const clusterItems = snapshot
       ? snapshot.clusters.map((cluster) => {
           const updated = cluster.latestUpdatedAt ? cluster.latestUpdatedAt.slice(5, 16).replace('T', ' ') : 'unknown';
-          return `${String(cluster.totalCount).padStart(3, ' ')}  ${String(cluster.pullRequestCount).padStart(2, ' ')}P/${String(cluster.issueCount).padStart(2, ' ')}I  ${updated}  ${cluster.displayTitle}`;
+          return `${String(cluster.totalCount).padStart(3, ' ')}  C${String(cluster.clusterId).padStart(5, ' ')}  ${String(cluster.pullRequestCount).padStart(2, ' ')}P/${String(cluster.issueCount).padStart(2, ' ')}I  ${updated}  ${cluster.displayTitle}`;
         })
       : ['Pick a repository with p'];
     widgets.clusters.setItems(clusterItems);
@@ -369,7 +369,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         loadSelectedThreadDetail(false);
         resetDetailScroll();
       }
-      status = `Cluster ${nextIndex + 1}/${snapshot.clusters.length}`;
+      status = selectedClusterId !== null ? `Cluster ${selectedClusterId} (${nextIndex + 1}/${snapshot.clusters.length})` : `Cluster ${nextIndex + 1}/${snapshot.clusters.length}`;
       render();
       return;
     }
@@ -807,10 +807,18 @@ export function renderDetailPane(
     return 'No cluster selected.\n\nRun `ghcrawl cluster owner/repo` if you have not clustered this repository yet.';
   }
   if (!threadDetail) {
-    return `{bold}${escapeBlessedText(clusterDetail.displayTitle)}{/bold}\n\nSelect a member to inspect thread details.`;
+    const representativeLabel =
+      clusterDetail.representativeNumber !== null && clusterDetail.representativeKind !== null
+        ? ` (#${clusterDetail.representativeNumber} representative ${clusterDetail.representativeKind === 'pull_request' ? 'pr' : 'issue'})`
+        : '';
+    return `{bold}Cluster ${clusterDetail.clusterId}${escapeBlessedText(representativeLabel)}{/bold}\n${escapeBlessedText(clusterDetail.displayTitle)}\n\nSelect a member to inspect thread details.`;
   }
 
   const thread = threadDetail.thread;
+  const representativeLabel =
+    clusterDetail.representativeNumber !== null && clusterDetail.representativeKind !== null
+      ? ` (#${clusterDetail.representativeNumber} representative ${clusterDetail.representativeKind === 'pull_request' ? 'pr' : 'issue'})`
+      : '';
   const labels = thread.labels.length > 0 ? escapeBlessedText(thread.labels.join(', ')) : 'none';
   const summaries = Object.entries(threadDetail.summaries)
     .map(([key, value]) => `{bold}${key}:{/bold}\n${escapeBlessedText(value)}`)
@@ -824,6 +832,8 @@ export function renderDetailPane(
         ? 'No neighbors available.'
         : 'Neighbors load when the detail pane is focused.';
   return [
+    `{bold}Cluster ${clusterDetail.clusterId}${escapeBlessedText(representativeLabel)}{/bold}`,
+    '',
     `{bold}${thread.kind} #${thread.number}{/bold}  ${escapeBlessedText(thread.title)}`,
     '',
     `{bold}Author:{/bold} ${escapeBlessedText(thread.authorLogin ?? 'unknown')}`,

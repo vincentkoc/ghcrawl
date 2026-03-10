@@ -7,8 +7,6 @@
 
 `ghcrawl` is a local-first GitHub issue and pull request crawler for maintainers.
 
-<img src="./docs/images/ghcrawl-openclaw-social-preview.jpg" alt="ghcrawl OpenClaw demo" width="640" />
-
 ![ghcrawl TUI demo](./docs/images/ghcrawl-tui-demo.gif)
 
 ## Install

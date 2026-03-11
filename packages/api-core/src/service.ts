@@ -57,7 +57,7 @@ import { openDb, type SqliteDatabase } from './db/sqlite.js';
 import { buildCanonicalDocument, isBotLikeAuthor } from './documents/normalize.js';
 import { makeGitHubClient, type GitHubClient } from './github/client.js';
 import { OpenAiProvider, type AiProvider } from './openai/provider.js';
-import { cosineSimilarity, rankNearestNeighbors } from './search/exact.js';
+import { cosineSimilarity, dotProduct, normalizeEmbedding, rankNearestNeighbors } from './search/exact.js';
 
 type RunTable = 'sync_runs' | 'summary_runs' | 'embedding_runs' | 'cluster_runs';
 
@@ -111,6 +111,8 @@ type StoredEmbeddingRow = ThreadRow & {
 
 type ParsedStoredEmbeddingRow = Omit<StoredEmbeddingRow, 'embedding_json'> & {
   embedding: number[];
+  normalizedEmbedding: number[];
+  embeddingNorm: number;
 };
 
 type EmbeddingWorkset = {
@@ -2785,10 +2787,16 @@ export class GHCrawlService {
       return cached;
     }
 
-    const parsed = this.loadStoredEmbeddings(repoId).map((row) => ({
-      ...row,
-      embedding: JSON.parse(row.embedding_json) as number[],
-    }));
+    const parsed = this.loadStoredEmbeddings(repoId).map((row) => {
+      const embedding = JSON.parse(row.embedding_json) as number[];
+      const normalized = normalizeEmbedding(embedding);
+      return {
+        ...row,
+        embedding,
+        normalizedEmbedding: normalized.normalized,
+        embeddingNorm: normalized.norm,
+      };
+    });
     this.parsedEmbeddingCache.set(repoId, parsed);
     return parsed;
   }
@@ -2947,27 +2955,55 @@ export class GHCrawlService {
     rows: ParsedStoredEmbeddingRow[],
     params: { limit: number; minScore: number; onProgress?: (message: string) => void },
   ): Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }> {
-    const bySource = new Map<EmbeddingSourceKind, Array<{ id: number; embedding: number[] }>>();
+    const bySource = new Map<EmbeddingSourceKind, Array<{ id: number; normalizedEmbedding: number[] }>>();
     for (const row of rows) {
       const list = bySource.get(row.source_kind) ?? [];
-      list.push({ id: row.id, embedding: row.embedding });
+      list.push({ id: row.id, normalizedEmbedding: row.normalizedEmbedding });
       bySource.set(row.source_kind, list);
     }
 
     const aggregated = new Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }>();
     const totalItems = Array.from(bySource.values()).reduce((sum, items) => sum + items.length, 0);
     let processedItems = 0;
+    let currentNeighborEntries = 0;
     let lastProgressAt = Date.now();
     for (const [sourceKind, items] of bySource.entries()) {
-      for (const item of items) {
-        const neighbors = rankNearestNeighbors(items, {
-          targetEmbedding: item.embedding,
-          limit: params.limit,
-          minScore: params.minScore,
-          skipId: item.id,
-        });
+      const topNeighbors = new Map<number, Array<{ neighborId: number; score: number }>>();
+      for (let leftIndex = 0; leftIndex < items.length; leftIndex += 1) {
+        const left = items[leftIndex];
+        let leftNeighbors = topNeighbors.get(left.id);
+        if (!leftNeighbors) {
+          leftNeighbors = [];
+          topNeighbors.set(left.id, leftNeighbors);
+        }
+        for (let rightIndex = leftIndex + 1; rightIndex < items.length; rightIndex += 1) {
+          const right = items[rightIndex];
+          const score = dotProduct(left.normalizedEmbedding, right.normalizedEmbedding);
+          if (score < params.minScore) {
+            continue;
+          }
+          currentNeighborEntries += this.insertBoundedNeighbor(leftNeighbors, { neighborId: right.id, score }, params.limit);
+          let rightNeighbors = topNeighbors.get(right.id);
+          if (!rightNeighbors) {
+            rightNeighbors = [];
+            topNeighbors.set(right.id, rightNeighbors);
+          }
+          currentNeighborEntries += this.insertBoundedNeighbor(rightNeighbors, { neighborId: left.id, score }, params.limit);
+        }
+
+        processedItems += 1;
+        const now = Date.now();
+        if (params.onProgress && now - lastProgressAt >= CLUSTER_PROGRESS_INTERVAL_MS) {
+          params.onProgress(
+            `[cluster] identifying similarity edges ${processedItems}/${totalItems} source embeddings processed current_edges~=${aggregated.size + Math.floor(currentNeighborEntries / 2)}`,
+          );
+          lastProgressAt = now;
+        }
+      }
+
+      for (const [threadId, neighbors] of topNeighbors.entries()) {
         for (const neighbor of neighbors) {
-          const key = this.edgeKey(item.id, neighbor.item.id);
+          const key = this.edgeKey(threadId, neighbor.neighborId);
           const existing = aggregated.get(key);
           if (existing) {
             existing.score = Math.max(existing.score, neighbor.score);
@@ -2975,24 +3011,38 @@ export class GHCrawlService {
             continue;
           }
           aggregated.set(key, {
-            leftThreadId: Math.min(item.id, neighbor.item.id),
-            rightThreadId: Math.max(item.id, neighbor.item.id),
+            leftThreadId: Math.min(threadId, neighbor.neighborId),
+            rightThreadId: Math.max(threadId, neighbor.neighborId),
             score: neighbor.score,
             sourceKinds: new Set([sourceKind]),
           });
-        }
-        processedItems += 1;
-        const now = Date.now();
-        if (params.onProgress && now - lastProgressAt >= CLUSTER_PROGRESS_INTERVAL_MS) {
-          params.onProgress(
-            `[cluster] identifying similarity edges ${processedItems}/${totalItems} source embeddings processed current_edges=${aggregated.size}`,
-          );
-          lastProgressAt = now;
         }
       }
     }
 
     return aggregated;
+  }
+
+  private insertBoundedNeighbor(
+    neighbors: Array<{ neighborId: number; score: number }>,
+    candidate: { neighborId: number; score: number },
+    limit: number,
+  ): number {
+    const initialLength = neighbors.length;
+    let insertAt = neighbors.length;
+    while (insertAt > 0 && candidate.score > neighbors[insertAt - 1].score) {
+      insertAt -= 1;
+    }
+
+    if (insertAt >= limit) {
+      return 0;
+    }
+
+    neighbors.splice(insertAt, 0, candidate);
+    if (neighbors.length > limit) {
+      neighbors.length = limit;
+    }
+    return neighbors.length - initialLength;
   }
 
   private persistClusterRun(

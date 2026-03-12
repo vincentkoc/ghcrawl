@@ -1182,7 +1182,7 @@ test('listAuthorThreads returns one author view with strongest same-author match
   }
 });
 
-test('clusterRepository emits timed progress updates while identifying similarities', () => {
+test('clusterRepository emits timed progress updates while identifying similarities', async () => {
   const messages: string[] = [];
   const originalDateNow = Date.now;
   let fakeNow = 0;
@@ -1232,7 +1232,7 @@ test('clusterRepository emits timed progress updates while identifying similarit
       insertEmbedding.run(12, sourceKind, 'text-embedding-3-large', 2, `hash-44-${sourceKind}`, '[0.98,0.02]', now, now);
     }
 
-    const result = service.clusterRepository({
+    const result = await service.clusterRepository({
       owner: 'openclaw',
       repo: 'openclaw',
       onProgress: (message) => messages.push(message),
@@ -1246,7 +1246,7 @@ test('clusterRepository emits timed progress updates while identifying similarit
   }
 });
 
-test('clusterRepository merges source kinds into one edge without directional duplicates', () => {
+test('clusterRepository merges source kinds into one edge without directional duplicates', async () => {
   const service = makeTestService({
     checkAuth: async () => undefined,
     getRepo: async () => ({}),
@@ -1286,7 +1286,7 @@ test('clusterRepository merges source kinds into one edge without directional du
       insertEmbedding.run(11, sourceKind, 'text-embedding-3-large', 2, `hash-43-${sourceKind}`, '[0.99,0.01]', now, now);
     }
 
-    const result = service.clusterRepository({
+    const result = await service.clusterRepository({
       owner: 'openclaw',
       repo: 'openclaw',
       k: 1,
@@ -1308,7 +1308,7 @@ test('clusterRepository merges source kinds into one edge without directional du
   }
 });
 
-test('clusterRepository prunes older cluster runs for the repo after a successful rebuild', () => {
+test('clusterRepository prunes older cluster runs for the repo after a successful rebuild', async () => {
   const service = makeTestService({
     checkAuth: async () => undefined,
     getRepo: async () => ({}),
@@ -1353,7 +1353,7 @@ test('clusterRepository prunes older cluster runs for the repo after a successfu
     insertEmbedding.run(10, 'title', 'text-embedding-3-large', 2, 'hash-42-title', '[1,0]', now, now);
     insertEmbedding.run(11, 'title', 'text-embedding-3-large', 2, 'hash-43-title', '[0.99,0.01]', now, now);
 
-    const result = service.clusterRepository({
+    const result = await service.clusterRepository({
       owner: 'openclaw',
       repo: 'openclaw',
     });

@@ -1,5 +1,9 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { existsSync } from 'node:fs';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 
 import { IterableMapper } from '@shutterstock/p-map-iterable';
 import {
@@ -42,6 +46,7 @@ import {
 } from '@ghcrawl/api-contract';
 
 import { buildClusters } from './cluster/build.js';
+import { buildSourceKindEdges } from './cluster/exact-edges.js';
 import {
   ensureRuntimeDirs,
   isLikelyGitHubToken,
@@ -57,7 +62,7 @@ import { openDb, type SqliteDatabase } from './db/sqlite.js';
 import { buildCanonicalDocument, isBotLikeAuthor } from './documents/normalize.js';
 import { makeGitHubClient, type GitHubClient } from './github/client.js';
 import { OpenAiProvider, type AiProvider } from './openai/provider.js';
-import { cosineSimilarity, dotProduct, normalizeEmbedding, rankNearestNeighbors } from './search/exact.js';
+import { cosineSimilarity, normalizeEmbedding, rankNearestNeighbors } from './search/exact.js';
 
 type RunTable = 'sync_runs' | 'summary_runs' | 'embedding_runs' | 'cluster_runs';
 
@@ -258,6 +263,7 @@ const SYNC_BATCH_SIZE = 100;
 const SYNC_BATCH_DELAY_MS = 5000;
 const STALE_CLOSED_SWEEP_LIMIT = 1000;
 const CLUSTER_PROGRESS_INTERVAL_MS = 5000;
+const CLUSTER_PARALLEL_MIN_EMBEDDINGS = 5000;
 const EMBED_ESTIMATED_CHARS_PER_TOKEN = 3;
 const EMBED_MAX_ITEM_TOKENS = 7000;
 const EMBED_MAX_BATCH_TOKENS = 250000;
@@ -1075,34 +1081,25 @@ export class GHCrawlService {
     }
   }
 
-  clusterRepository(params: {
+  async clusterRepository(params: {
     owner: string;
     repo: string;
     minScore?: number;
     k?: number;
     onProgress?: (message: string) => void;
-  }): ClusterResultDto {
+  }): Promise<ClusterResultDto> {
     const repository = this.requireRepository(params.owner, params.repo);
     const runId = this.startRun('cluster_runs', repository.id, repository.fullName);
     const minScore = params.minScore ?? 0.82;
     const k = params.k ?? 6;
 
     try {
-      const rows = this.loadParsedStoredEmbeddings(repository.id);
-      const threadMeta = new Map<number, { number: number; title: string }>();
-      for (const row of rows) {
-        threadMeta.set(row.id, { number: row.number, title: row.title });
-      }
-      const items = Array.from(threadMeta.entries()).map(([id, meta]) => ({
-        id,
-        number: meta.number,
-        title: meta.title,
-      }));
+      const { items, sourceKinds } = this.loadClusterableThreadMeta(repository.id);
 
       params.onProgress?.(
-        `[cluster] loaded ${items.length} embedded thread(s) across ${new Set(rows.map((row) => row.source_kind)).size} source kind(s) for ${repository.fullName} k=${k} minScore=${minScore}`,
+        `[cluster] loaded ${items.length} embedded thread(s) across ${sourceKinds.length} source kind(s) for ${repository.fullName} k=${k} minScore=${minScore}`,
       );
-      const aggregatedEdges = this.aggregateRepositoryEdges(rows, {
+      const aggregatedEdges = await this.aggregateRepositoryEdges(repository.id, sourceKinds, {
         limit: k,
         minScore,
         onProgress: params.onProgress,
@@ -1420,7 +1417,7 @@ export class GHCrawlService {
       });
     }
     if (selected.cluster) {
-      cluster = this.clusterRepository({
+      cluster = await this.clusterRepository({
         owner: params.owner,
         repo: params.repo,
         onProgress: params.onProgress,
@@ -1739,7 +1736,7 @@ export class GHCrawlService {
         });
       }
       case 'cluster': {
-        const result = this.clusterRepository(request);
+        const result = await this.clusterRepository(request);
         return actionResponseSchema.parse({
           ok: true,
           action: request.action,
@@ -2801,6 +2798,34 @@ export class GHCrawlService {
     return parsed;
   }
 
+  private loadClusterableThreadMeta(repoId: number): {
+    items: Array<{ id: number; number: number; title: string }>;
+    sourceKinds: EmbeddingSourceKind[];
+  } {
+    const rows = this.db
+      .prepare(
+        `select t.id, t.number, t.title, e.source_kind
+         from threads t
+         join document_embeddings e on e.thread_id = t.id
+         where t.repo_id = ?
+           and t.state = 'open'
+           and t.closed_at_local is null`,
+      )
+      .all(repoId) as Array<{ id: number; number: number; title: string; source_kind: EmbeddingSourceKind }>;
+
+    const itemsById = new Map<number, { id: number; number: number; title: string }>();
+    const sourceKinds = new Set<EmbeddingSourceKind>();
+    for (const row of rows) {
+      itemsById.set(row.id, { id: row.id, number: row.number, title: row.title });
+      sourceKinds.add(row.source_kind);
+    }
+
+    return {
+      items: Array.from(itemsById.values()),
+      sourceKinds: Array.from(sourceKinds.values()),
+    };
+  }
+
   private listStoredClusterNeighbors(repoId: number, threadId: number, limit: number): SearchHitDto['neighbors'] {
     const latestRun = this.getLatestClusterRun(repoId);
     if (!latestRun) {
@@ -2951,98 +2976,157 @@ export class GHCrawlService {
     return `${left}:${right}`;
   }
 
-  private aggregateRepositoryEdges(
-    rows: ParsedStoredEmbeddingRow[],
+  private async aggregateRepositoryEdges(
+    repoId: number,
+    sourceKinds: EmbeddingSourceKind[],
     params: { limit: number; minScore: number; onProgress?: (message: string) => void },
-  ): Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }> {
-    const bySource = new Map<EmbeddingSourceKind, Array<{ id: number; normalizedEmbedding: number[] }>>();
-    for (const row of rows) {
-      const list = bySource.get(row.source_kind) ?? [];
-      list.push({ id: row.id, normalizedEmbedding: row.normalizedEmbedding });
-      bySource.set(row.source_kind, list);
+  ): Promise<Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }>> {
+    const aggregated = new Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }>();
+    const totalItems = sourceKinds.reduce((sum, sourceKind) => sum + this.countEmbeddingsForSourceKind(repoId, sourceKind), 0);
+
+    if (sourceKinds.length === 0 || totalItems === 0) {
+      return aggregated;
     }
 
-    const aggregated = new Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }>();
-    const totalItems = Array.from(bySource.values()).reduce((sum, items) => sum + items.length, 0);
-    let processedItems = 0;
-    let currentNeighborEntries = 0;
-    let lastProgressAt = Date.now();
-    for (const [sourceKind, items] of bySource.entries()) {
-      const topNeighbors = new Map<number, Array<{ neighborId: number; score: number }>>();
-      for (let leftIndex = 0; leftIndex < items.length; leftIndex += 1) {
-        const left = items[leftIndex];
-        let leftNeighbors = topNeighbors.get(left.id);
-        if (!leftNeighbors) {
-          leftNeighbors = [];
-          topNeighbors.set(left.id, leftNeighbors);
-        }
-        for (let rightIndex = leftIndex + 1; rightIndex < items.length; rightIndex += 1) {
-          const right = items[rightIndex];
-          const score = dotProduct(left.normalizedEmbedding, right.normalizedEmbedding);
-          if (score < params.minScore) {
-            continue;
-          }
-          currentNeighborEntries += this.insertBoundedNeighbor(leftNeighbors, { neighborId: right.id, score }, params.limit);
-          let rightNeighbors = topNeighbors.get(right.id);
-          if (!rightNeighbors) {
-            rightNeighbors = [];
-            topNeighbors.set(right.id, rightNeighbors);
-          }
-          currentNeighborEntries += this.insertBoundedNeighbor(rightNeighbors, { neighborId: left.id, score }, params.limit);
-        }
-
-        processedItems += 1;
-        const now = Date.now();
-        if (params.onProgress && now - lastProgressAt >= CLUSTER_PROGRESS_INTERVAL_MS) {
-          params.onProgress(
-            `[cluster] identifying similarity edges ${processedItems}/${totalItems} source embeddings processed current_edges~=${aggregated.size + Math.floor(currentNeighborEntries / 2)}`,
-          );
-          lastProgressAt = now;
-        }
+    const shouldParallelize = sourceKinds.length > 1 && totalItems >= CLUSTER_PARALLEL_MIN_EMBEDDINGS && os.availableParallelism() > 1;
+    if (!shouldParallelize) {
+      const rows = this.loadParsedStoredEmbeddings(repoId);
+      const bySource = new Map<EmbeddingSourceKind, Array<{ id: number; normalizedEmbedding: number[] }>>();
+      for (const row of rows) {
+        const list = bySource.get(row.source_kind) ?? [];
+        list.push({ id: row.id, normalizedEmbedding: row.normalizedEmbedding });
+        bySource.set(row.source_kind, list);
       }
 
-      for (const [threadId, neighbors] of topNeighbors.entries()) {
-        for (const neighbor of neighbors) {
-          const key = this.edgeKey(threadId, neighbor.neighborId);
-          const existing = aggregated.get(key);
-          if (existing) {
-            existing.score = Math.max(existing.score, neighbor.score);
-            existing.sourceKinds.add(sourceKind);
-            continue;
-          }
-          aggregated.set(key, {
-            leftThreadId: Math.min(threadId, neighbor.neighborId),
-            rightThreadId: Math.max(threadId, neighbor.neighborId),
-            score: neighbor.score,
-            sourceKinds: new Set([sourceKind]),
-          });
-        }
+      let processedItems = 0;
+      for (const sourceKind of sourceKinds) {
+        const items = bySource.get(sourceKind) ?? [];
+        const edges = buildSourceKindEdges(items, {
+          limit: params.limit,
+          minScore: params.minScore,
+          progressIntervalMs: CLUSTER_PROGRESS_INTERVAL_MS,
+          onProgress: (progress) => {
+            if (!params.onProgress) return;
+            params.onProgress(
+              `[cluster] identifying similarity edges ${processedItems + progress.processedItems}/${totalItems} source embeddings processed current_edges~=${aggregated.size + progress.currentEdgeEstimate}`,
+            );
+          },
+        });
+        processedItems += items.length;
+        this.mergeSourceKindEdges(aggregated, edges, sourceKind);
       }
+
+      return aggregated;
+    }
+
+    const workerUrl = this.resolveEdgeWorkerUrl();
+    const progressBySource = new Map<EmbeddingSourceKind, { processedItems: number; totalItems: number; currentEdgeEstimate: number }>();
+
+    const edgeSets = await Promise.all(
+      sourceKinds.map(
+        (sourceKind) =>
+          new Promise<Array<{ leftThreadId: number; rightThreadId: number; score: number }>>((resolve, reject) => {
+            const worker = new Worker(workerUrl, {
+              workerData: {
+                dbPath: this.config.dbPath,
+                repoId,
+                sourceKind,
+                limit: params.limit,
+                minScore: params.minScore,
+              },
+            });
+
+            worker.on('message', (message: unknown) => {
+              if (!message || typeof message !== 'object') {
+                return;
+              }
+              const typed = message as
+                | {
+                    type: 'progress';
+                    sourceKind: EmbeddingSourceKind;
+                    processedItems: number;
+                    totalItems: number;
+                    currentEdgeEstimate: number;
+                  }
+                | { type: 'result'; sourceKind: EmbeddingSourceKind; edges: Array<{ leftThreadId: number; rightThreadId: number; score: number }> };
+              if (typed.type === 'progress') {
+                progressBySource.set(typed.sourceKind, {
+                  processedItems: typed.processedItems,
+                  totalItems: typed.totalItems,
+                  currentEdgeEstimate: typed.currentEdgeEstimate,
+                });
+                if (params.onProgress) {
+                  const processedItems = Array.from(progressBySource.values()).reduce((sum, value) => sum + value.processedItems, 0);
+                  const currentEdgeEstimate = Array.from(progressBySource.values()).reduce((sum, value) => sum + value.currentEdgeEstimate, 0);
+                  params.onProgress(
+                    `[cluster] identifying similarity edges ${processedItems}/${totalItems} source embeddings processed current_edges~=${aggregated.size + currentEdgeEstimate}`,
+                  );
+                }
+                return;
+              }
+              resolve(typed.edges);
+            });
+
+            worker.on('error', reject);
+            worker.on('exit', (code) => {
+              if (code !== 0) {
+                reject(new Error(`edge worker for ${sourceKind} exited with code ${code}`));
+              }
+            });
+          }),
+      ),
+    );
+
+    for (const [index, edges] of edgeSets.entries()) {
+      this.mergeSourceKindEdges(aggregated, edges, sourceKinds[index] as EmbeddingSourceKind);
     }
 
     return aggregated;
   }
 
-  private insertBoundedNeighbor(
-    neighbors: Array<{ neighborId: number; score: number }>,
-    candidate: { neighborId: number; score: number },
-    limit: number,
-  ): number {
-    const initialLength = neighbors.length;
-    let insertAt = neighbors.length;
-    while (insertAt > 0 && candidate.score > neighbors[insertAt - 1].score) {
-      insertAt -= 1;
+  private mergeSourceKindEdges(
+    aggregated: Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<EmbeddingSourceKind> }>,
+    edges: Array<{ leftThreadId: number; rightThreadId: number; score: number }>,
+    sourceKind: EmbeddingSourceKind,
+  ): void {
+    for (const edge of edges) {
+      const key = this.edgeKey(edge.leftThreadId, edge.rightThreadId);
+      const existing = aggregated.get(key);
+      if (existing) {
+        existing.score = Math.max(existing.score, edge.score);
+        existing.sourceKinds.add(sourceKind);
+        continue;
+      }
+      aggregated.set(key, {
+        leftThreadId: edge.leftThreadId,
+        rightThreadId: edge.rightThreadId,
+        score: edge.score,
+        sourceKinds: new Set([sourceKind]),
+      });
     }
+  }
 
-    if (insertAt >= limit) {
-      return 0;
-    }
+  private countEmbeddingsForSourceKind(repoId: number, sourceKind: EmbeddingSourceKind): number {
+    const row = this.db
+      .prepare(
+        `select count(*) as count
+         from document_embeddings e
+         join threads t on t.id = e.thread_id
+         where t.repo_id = ?
+           and t.state = 'open'
+           and t.closed_at_local is null
+           and e.source_kind = ?`,
+      )
+      .get(repoId, sourceKind) as { count: number };
+    return row.count;
+  }
 
-    neighbors.splice(insertAt, 0, candidate);
-    if (neighbors.length > limit) {
-      neighbors.length = limit;
+  private resolveEdgeWorkerUrl(): URL {
+    const jsUrl = new URL('./cluster/edge-worker.js', import.meta.url);
+    if (existsSync(fileURLToPath(jsUrl))) {
+      return jsUrl;
     }
-    return neighbors.length - initialLength;
+    return new URL('./cluster/edge-worker.ts', import.meta.url);
   }
 
   private persistClusterRun(

@@ -424,7 +424,7 @@ export async function run(argv: string[], stdout: NodeJS.WritableStream = proces
       }
       case 'cluster': {
         const { owner, repo, values } = parseRepoFlags(rest);
-        const result = getService().clusterRepository({
+        const result = await getService().clusterRepository({
           owner,
           repo,
           k: typeof values.k === 'string' ? Number(values.k) : undefined,

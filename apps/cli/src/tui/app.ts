@@ -1756,7 +1756,7 @@ async function runColdStartSetup(
       repo: target.repo,
       onProgress: reporter,
     });
-    service.clusterRepository({
+    await service.clusterRepository({
       owner: target.owner,
       repo: target.repo,
       onProgress: reporter,

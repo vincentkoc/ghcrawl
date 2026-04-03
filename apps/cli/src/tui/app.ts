@@ -836,7 +836,11 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     void (async () => {
       modalOpen = true;
       try {
-        const selection = await promptUpdatePipelineSelection(widgets.screen, snapshot?.stats ?? null);
+        const selection = await promptUpdatePipelineSelection(
+          widgets.screen,
+          snapshot?.stats ?? null,
+          params.service.config.embeddingBasis,
+        );
         if (!selection) {
           render();
           return;
@@ -1241,7 +1245,10 @@ export function renderDetailPane(
     ? `{bold}Closed:{/bold} ${escapeBlessedText(thread.closedAtLocal ?? thread.closedAtGh ?? 'yes')} ${thread.closeReasonLocal ? `(${escapeBlessedText(thread.closeReasonLocal)})` : ''}`.trimEnd()
     : '{bold}Closed:{/bold} no';
   const summaries = Object.entries(threadDetail.summaries)
-    .map(([key, value]) => `{bold}${key}:{/bold}\n${escapeBlessedText(value)}`)
+    .map(([key, value]) => {
+      const label = key === 'dedupe_summary' ? 'LLM Summary' : key;
+      return `{bold}${escapeBlessedText(label)}:{/bold}\n${escapeBlessedText(value)}`;
+    })
     .join('\n\n');
   const neighbors =
     threadDetail.neighbors.length > 0
@@ -1261,10 +1268,10 @@ export function renderDetailPane(
     `{bold}Updated:{/bold} ${thread.updatedAtGh ?? 'unknown'}`,
     `{bold}Labels:{/bold} ${labels}`,
     `{bold}URL:{/bold} ${escapeBlessedText(thread.htmlUrl)}`,
+    summaries ? `\n\n${summaries}` : '',
     '',
     `{bold}Body{/bold}`,
     escapeBlessedText(thread.body ?? '(no body)'),
-    summaries ? `\n\n${summaries}` : '',
     `\n\n{bold}Neighbors{/bold}\n${neighbors}`,
   ]
     .filter(Boolean)
@@ -1346,6 +1353,23 @@ export function buildUpdatePipelineLabels(
     const title = task === 'sync' ? 'GitHub sync/reconcile' : task === 'embed' ? 'Embed refresh' : 'Cluster rebuild';
     return `${mark} ${title}  ${describeUpdateTask(task, stats, now)}`;
   });
+}
+
+export function buildUpdatePipelineHelpContent(embeddingBasis: 'title_original' | 'title_summary'): string {
+  const summariesEnabled = embeddingBasis === 'title_summary';
+  const summaryStatus = summariesEnabled
+    ? 'LLM summaries: enabled via title_summary.'
+    : 'LLM summaries: disabled; current basis is title_original.';
+  const summaryAction = summariesEnabled
+    ? 'On openclaw/openclaw this improved non-solo cluster membership by about 50% versus title_original.'
+    : 'Enable with `ghcrawl configure --embedding-basis title_summary` if you want richer clustering; on openclaw/openclaw that improved non-solo cluster membership by about 50%.';
+  return [
+    'Usually you want all three. Run order is fixed: GitHub sync/reconcile -> embeddings -> clusters.',
+    `${summaryStatus} ${summaryAction}`,
+    'A first summarize of ~18k open issues/PRs in openclaw/openclaw typically costs about $15-$30 with gpt-5-mini.',
+    'Later refreshes are usually much cheaper because only changed items need summaries.',
+    'Toggle with space, move with arrows, Enter to start, Esc to cancel.',
+  ].join('\n');
 }
 
 export function buildHelpContent(): string {
@@ -1474,6 +1498,7 @@ async function promptHelp(screen: blessed.Widgets.Screen): Promise<void> {
 async function promptUpdatePipelineSelection(
   screen: blessed.Widgets.Screen,
   stats: TuiRepoStats | null,
+  embeddingBasis: 'title_original' | 'title_summary',
 ): Promise<UpdateTaskSelection | null> {
   const selection: UpdateTaskSelection = { sync: true, embed: true, cluster: true };
   const modalWidth = '76%';
@@ -1487,7 +1512,7 @@ async function promptUpdatePipelineSelection(
     top: 'center',
     left: 'center',
     width: modalWidth,
-    height: 11,
+    height: 14,
     style: {
       border: { fg: '#5bc0eb' },
       item: { fg: 'white' },
@@ -1497,14 +1522,12 @@ async function promptUpdatePipelineSelection(
   });
   const help = blessed.box({
     parent: screen,
-    top: 'center-4',
+    top: 'center-5',
     left: 'center',
     width: modalWidth,
-    height: 4,
+    height: 7,
     style: { fg: 'white', bg: '#101522' },
-    content:
-      'Usually you want all three. Run order is fixed: GitHub sync/reconcile -> embeddings -> clusters.\n' +
-      'Toggle with space, move with arrows, Enter to start, Esc to cancel.',
+    content: buildUpdatePipelineHelpContent(embeddingBasis),
   });
 
   box.focus();

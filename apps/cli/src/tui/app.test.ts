@@ -6,6 +6,7 @@ import type { TuiClusterDetail, TuiRepoStats, TuiThreadDetail } from '@ghcrawl/a
 import {
   buildRefreshCliArgs,
   buildHelpContent,
+  buildUpdatePipelineHelpContent,
   buildUpdatePipelineLabels,
   describeUpdateTask,
   escapeBlessedText,
@@ -73,9 +74,11 @@ test('renderDetailPane escapes user-provided text before rendering into a tags-e
   const rendered = renderDetailPane(detail, cluster, 'detail');
   assert.match(rendered, /Cluster 1 \(#42 representative issue\)/);
   assert.match(rendered, /Bad \\{bold\\}title\\{\/bold\\}/);
+  assert.match(rendered, /LLM Summary:/);
   assert.match(rendered, /Body with \\{red-fg\\}tags\\{\/red-fg\\}/);
   assert.match(rendered, /Summary \\{yellow-fg\\}text\\{\/yellow-fg\\}/);
   assert.match(rendered, /Neighbor \\{blue-fg\\}title\\{\/blue-fg\\}/);
+  assert.ok(rendered.indexOf('LLM Summary:') < rendered.indexOf('{bold}Body{/bold}'));
 });
 
 test('parseOwnerRepoValue accepts owner slash repo values and rejects invalid ones', () => {
@@ -197,6 +200,17 @@ test('buildHelpContent includes the full key command list', () => {
   assert.match(content, /q\s+quit the TUI/);
   assert.doesNotMatch(content, /j \/ k/);
   assert.match(content, /This popup scrolls\./);
+});
+
+test('buildUpdatePipelineHelpContent explains the LLM summary tradeoff for both modes', () => {
+  const disabled = buildUpdatePipelineHelpContent('title_original');
+  assert.match(disabled, /LLM summaries: disabled/);
+  assert.match(disabled, /configure --embedding-basis title_summary/);
+  assert.match(disabled, /\$15-\$30/);
+
+  const enabled = buildUpdatePipelineHelpContent('title_summary');
+  assert.match(enabled, /LLM summaries: enabled/);
+  assert.match(enabled, /about 50%/);
 });
 
 test('buildRefreshCliArgs maps the staged selection to refresh skip flags', () => {

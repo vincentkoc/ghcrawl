@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.8.0-beta.1 - 2026-04-03
+
+### Highlights
+
+- Migrated ghcrawl to persistent Vectorlite-backed search and clustering so similarity data survives across runs and local analysis scales better. Thanks @huntharo (#7)
+- Added more agent-friendly CLI help and a clearer JSON command contract for automation-oriented workflows. Thanks @huntharo (#37)
+
+### Fixes
+
+- Refreshed the cluster performance baseline so perf checks track the current search and clustering path. Thanks @huntharo (#39)
+
+### Docs
+
+- Added a `CLAUDE.md` link from `AGENTS.md` to make maintainer guidance easier to discover.
+
+### Internal
+
+- Updated `openai` from `6.32.0` to `6.33.0`. Thanks @dependabot[bot] (#40)
+
 ## v0.7.1 - 2026-03-28
 
 ### Fixes

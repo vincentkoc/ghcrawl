@@ -74,6 +74,22 @@ This was the first useful threshold sweep recovered from the optimization thread
 
 The immediate takeaway from the optimize loop was that lowering the threshold increased coverage fast, but Union-Find transitive closure created degenerate mega-clusters. That pushed the work toward bounded clustering, refinement, and eventually judge-scored evaluation.
 
+## When To Use `/ce-optimize`
+
+This pattern is useful for the hardest class of engineering problems: cases where you can generate multiple code or configuration variants, run a real evaluation against each one, and keep only the variants that improve the outcome.
+
+It is not limited to clustering. A simple example is memory tuning for an application that keeps OOM-crashing. You should fix unnecessary memory use first, but sometimes the remaining question really is "what is the smallest heap or container limit that works reliably?" Instead of jumping from `512 MB` to `8 GB`, `/ce-optimize` can test a range such as `1 GB`, `2 GB`, `4 GB`, and `6 GB`, then score the results based on concrete signals like OOM exits, restart frequency, or long GC pauses.
+
+Clustering is a stronger example because naive hard metrics can lie. Lowering the similarity threshold improves coverage quickly, but at some point everything starts collapsing into giant garbage clusters. A purely numeric metric might say the run improved; a human reviewer would say the output is unusable. That is where LLM-as-judge matters: sample the produced clusters, score whether they still preserve real semantic similarity, and reject variants that improve coverage by destroying meaning.
+
+Prompt design is another good fit. In this project, summarization quality directly affected clustering quality. Instead of hand-tuning one prompt forever or shipping the first acceptable draft, `/ce-optimize` generated prompt variants, measured token cost and downstream clustering behavior, and used judge-based scoring to identify prompts that were both cheaper and better at preserving meaningful distinctions.
+
+The practical rule is:
+
+- Use `/ce-optimize` when the problem can be framed as "try several variants, run the same evaluation, and compare the outcomes."
+- Use hard metrics alone when success is objective and cheap to measure.
+- Add LLM-as-judge when a purely numeric metric can be gamed or when quality depends on semantic correctness, coherence, or human usefulness.
+
 ## Approach
 
 ### Phase 1: Summarization Prompt Optimization

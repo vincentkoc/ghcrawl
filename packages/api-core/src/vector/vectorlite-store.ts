@@ -49,12 +49,22 @@ export class VectorliteStore implements VectorStore {
   }
 
   resetRepository(params: { storePath: string; dimensions: number }): void {
-    const handle = this.getHandle(params.storePath, params.dimensions);
-    handle.db.exec(`drop table if exists ${TABLE_NAME}`);
-    handle.db.exec(`delete from ${META_TABLE_NAME}`);
-    fs.rmSync(this.indexPath(params.storePath), { force: true });
-    handle.dimensions = null;
-    this.ensureSchema(handle, params.dimensions);
+    try {
+      const handle = this.getHandle(params.storePath, params.dimensions);
+      handle.db.exec(`drop table if exists ${TABLE_NAME}`);
+      handle.db.exec(`delete from ${META_TABLE_NAME}`);
+      fs.rmSync(this.indexPath(params.storePath), { force: true });
+      handle.dimensions = null;
+      this.ensureSchema(handle, params.dimensions);
+    } catch (error) {
+      if (!this.isCorruptedIndexError(error)) {
+        throw error;
+      }
+      this.resetStoreFiles(params.storePath);
+      const handle = this.getHandle(params.storePath, params.dimensions);
+      handle.dimensions = null;
+      this.ensureSchema(handle, params.dimensions);
+    }
   }
 
   upsertVector(params: { storePath: string; dimensions: number; threadId: number; vector: number[] }): void {
@@ -155,5 +165,18 @@ export class VectorliteStore implements VectorStore {
 
   private escapeSqlString(value: string): string {
     return value.replace(/'/g, "''");
+  }
+
+  private resetStoreFiles(storePath: string): void {
+    const handle = this.handles.get(storePath);
+    handle?.db.close();
+    this.handles.delete(storePath);
+    fs.rmSync(storePath, { force: true });
+    fs.rmSync(this.indexPath(storePath), { force: true });
+  }
+
+  private isCorruptedIndexError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /Failed to load index from file|corrupted or unsupported/i.test(message);
   }
 }

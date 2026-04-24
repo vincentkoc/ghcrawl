@@ -1994,6 +1994,10 @@ test('clusterRepository falls back to deterministic fingerprints when vectors ar
 
     assert.equal(result.edges, 1);
     assert.equal(result.clusters, 1);
+    const revisionCount = service.db.prepare('select count(*) as count from thread_revisions').get() as { count: number };
+    const fingerprintCount = service.db.prepare('select count(*) as count from thread_fingerprints').get() as { count: number };
+    assert.equal(revisionCount.count, 2);
+    assert.equal(fingerprintCount.count, 2);
   } finally {
     service.close();
   }

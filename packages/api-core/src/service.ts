@@ -62,7 +62,10 @@ import {
   upsertClusterGroup,
   upsertClusterMembership,
   upsertSimilarityEdgeEvidence,
+  upsertThreadFingerprint,
+  upsertThreadRevision,
 } from './cluster/persistent-store.js';
+import type { DeterministicThreadFingerprint } from './cluster/thread-fingerprint.js';
 import {
   ensureRuntimeDirs,
   isLikelyGitHubToken,
@@ -1454,6 +1457,7 @@ export class GHCrawlService {
       } else {
         const deterministicItems = this.loadDeterministicClusterableThreadMeta(repository.id);
         const deterministic = buildDeterministicClusterGraph(deterministicItems, { topK: Math.max(k * 8, 64) });
+        this.persistDeterministicFingerprints(deterministicItems, deterministic.fingerprints);
         items = deterministicItems.map((item) => ({ id: item.id, number: item.number, title: item.title }));
         aggregatedEdges = new Map();
         for (const edge of deterministic.edges) {
@@ -4088,10 +4092,12 @@ export class GHCrawlService {
     title: string;
     body: string | null;
     labels: string[];
+    rawJson: string;
+    updatedAtGh: string | null;
   }> {
     const rows = this.db
       .prepare(
-        `select id, number, kind, title, body, labels_json
+        `select id, number, kind, title, body, labels_json, raw_json, updated_at_gh
          from threads
          where repo_id = ?
            and state = 'open'
@@ -4105,6 +4111,8 @@ export class GHCrawlService {
       title: string;
       body: string | null;
       labels_json: string;
+      raw_json: string;
+      updated_at_gh: string | null;
     }>;
     return rows.map((row) => ({
       id: row.id,
@@ -4113,7 +4121,35 @@ export class GHCrawlService {
       title: row.title,
       body: row.body,
       labels: parseArray(row.labels_json),
+      rawJson: row.raw_json,
+      updatedAtGh: row.updated_at_gh,
     }));
+  }
+
+  private persistDeterministicFingerprints(
+    items: Array<{
+      id: number;
+      title: string;
+      body: string | null;
+      labels: string[];
+      rawJson: string;
+      updatedAtGh: string | null;
+    }>,
+    fingerprints: Map<number, DeterministicThreadFingerprint>,
+  ): void {
+    for (const item of items) {
+      const fingerprint = fingerprints.get(item.id);
+      if (!fingerprint) continue;
+      const revisionId = upsertThreadRevision(this.db, {
+        threadId: item.id,
+        sourceUpdatedAt: item.updatedAtGh,
+        title: item.title,
+        body: item.body,
+        labels: item.labels,
+        rawJson: item.rawJson,
+      });
+      upsertThreadFingerprint(this.db, { threadRevisionId: revisionId, fingerprint });
+    }
   }
 
   private loadNormalizedActiveVectors(repoId: number): Array<{ id: number; number: number; title: string; embedding: number[] }> {

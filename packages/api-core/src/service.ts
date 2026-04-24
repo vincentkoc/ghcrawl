@@ -98,7 +98,7 @@ import {
   type GitcrawlConfig,
 } from './config.js';
 import { migrate } from './db/migrate.js';
-import { openDb, type SqliteDatabase } from './db/sqlite.js';
+import { checkpointWal, openDb, type SqliteDatabase } from './db/sqlite.js';
 import { readTextBlob, storeTextBlob } from './db/blob-store.js';
 import { buildCanonicalDocument, isBotLikeAuthor } from './documents/normalize.js';
 import { makeGitHubClient, type GitHubClient } from './github/client.js';
@@ -651,6 +651,7 @@ export class GHCrawlService {
 
   close(): void {
     this.vectorStore.close();
+    checkpointWal(this.db);
     this.db.close();
   }
 

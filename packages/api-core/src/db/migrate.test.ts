@@ -47,3 +47,15 @@ test('migrate creates core tables', () => {
     db.close();
   }
 });
+
+test('openDb applies bounded WAL and concurrency pragmas', () => {
+  const db = openDb(':memory:');
+  try {
+    assert.equal(db.pragma('foreign_keys', { simple: true }), 1);
+    assert.equal(db.pragma('busy_timeout', { simple: true }), 5000);
+    assert.equal(db.pragma('temp_store', { simple: true }), 2);
+    assert.equal(db.pragma('cache_size', { simple: true }), -65536);
+  } finally {
+    db.close();
+  }
+});

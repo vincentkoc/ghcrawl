@@ -23,6 +23,7 @@ type CommandName =
   | 'close-cluster'
   | 'exclude-cluster-member'
   | 'summarize'
+  | 'key-summaries'
   | 'purge-comments'
   | 'embed'
   | 'cluster'
@@ -214,6 +215,18 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     description: 'Generate or refresh embeddings for one repo or one thread.',
     options: ['--number <thread>  Restrict embedding work to one thread', '--json  Emit machine-readable JSON output explicitly'],
     examples: ['ghcrawl embed openclaw/openclaw --json', 'ghcrawl embed openclaw/openclaw --number 42 --json'],
+    agentJson: true,
+  },
+  {
+    name: 'key-summaries',
+    synopsis: 'key-summaries <owner/repo> [--number <thread>] [--limit <count>] [--json]',
+    description: 'Generate cached 3-line LLM key summaries for clustering enrichment.',
+    options: [
+      '--number <thread>  Restrict key summary work to one thread',
+      '--limit <count>  Limit the number of generated summaries',
+      '--json  Emit machine-readable JSON output explicitly',
+    ],
+    examples: ['ghcrawl key-summaries openclaw/openclaw --limit 25 --json'],
     agentJson: true,
   },
   {
@@ -1063,6 +1076,18 @@ export async function run(
           repo,
           threadNumber: typeof values.number === 'string' ? parsePositiveInteger('number', values.number, 'summarize') : undefined,
           includeComments: values['include-comments'] === true,
+          onProgress: (message: string) => writeProgress(message, stderr),
+        });
+        writeJson(stdout, result);
+        return;
+      }
+      case 'key-summaries': {
+        const { owner, repo, values } = parseRepoFlags('key-summaries', rest);
+        const result = await getService().generateKeySummaries({
+          owner,
+          repo,
+          threadNumber: typeof values.number === 'string' ? parsePositiveInteger('number', values.number, 'key-summaries') : undefined,
+          limit: typeof values.limit === 'string' ? parsePositiveInteger('limit', values.limit, 'key-summaries') : undefined,
           onProgress: (message: string) => writeProgress(message, stderr),
         });
         writeJson(stdout, result);

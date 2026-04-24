@@ -49,6 +49,7 @@ const publicCommands = [
   'close-cluster',
   'exclude-cluster-member',
   'embed',
+  'key-summaries',
   'cluster',
   'clusters',
   'durable-clusters',
@@ -272,6 +273,7 @@ test('agent-facing command help advertises explicit --json', async () => {
     'close-cluster',
     'exclude-cluster-member',
     'embed',
+    'key-summaries',
     'cluster',
     'clusters',
     'durable-clusters',
@@ -467,6 +469,37 @@ test('refresh command forwards include-code hydration flag', async () => {
 
   assert.equal((received as { includeCode?: boolean }).includeCode, true);
   assert.match(stdout.read(), /"codeFilesSynced": 1/);
+});
+
+test('key-summaries command forwards enrichment options', async () => {
+  const stdout = createWritableCapture();
+  const context = makeRunContext();
+  const original = GHCrawlService.prototype.generateKeySummaries;
+  let received: unknown;
+
+  GHCrawlService.prototype.generateKeySummaries = async function generateKeySummariesStub(params: unknown) {
+    received = params;
+    return { runId: 1, generated: 1, skipped: 0, inputTokens: 10, outputTokens: 5, totalTokens: 15 } as never;
+  };
+
+  try {
+    await run(['key-summaries', 'openclaw/openclaw', '--number', '42', '--limit', '1'], stdout.stream, {
+      env: context.env,
+      cwd: context.cwd,
+    });
+  } finally {
+    GHCrawlService.prototype.generateKeySummaries = original;
+    context.cleanup();
+  }
+
+  assert.deepEqual(received, {
+    owner: 'openclaw',
+    repo: 'openclaw',
+    threadNumber: 42,
+    limit: 1,
+    onProgress: (received as { onProgress?: unknown }).onProgress,
+  });
+  assert.match(stdout.read(), /"generated": 1/);
 });
 
 test('parseOwnerRepo accepts owner slash repo syntax', () => {

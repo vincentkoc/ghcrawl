@@ -5,6 +5,7 @@ import {
   applyClusterFilters,
   buildMemberRows,
   cycleFocusPane,
+  cycleMemberSortMode,
   cycleMinSizeFilter,
   cycleSortMode,
   findSelectableIndex,
@@ -12,6 +13,7 @@ import {
   formatRelativeTime,
   moveSelectableIndex,
   preserveSelectedId,
+  resolveMemberHeaderSortFromClick,
 } from './state.js';
 import type { TuiClusterDetail, TuiClusterSummary } from '@ghcrawl/api-core';
 
@@ -27,6 +29,14 @@ test('cycleMinSizeFilter rotates through presets', () => {
   assert.equal(cycleMinSizeFilter(20), 50);
   assert.equal(cycleMinSizeFilter(50), 0);
   assert.equal(cycleMinSizeFilter(0), 1);
+});
+
+test('cycleMemberSortMode rotates through member sort modes', () => {
+  assert.equal(cycleMemberSortMode('kind'), 'recent');
+  assert.equal(cycleMemberSortMode('recent'), 'number');
+  assert.equal(cycleMemberSortMode('number'), 'state');
+  assert.equal(cycleMemberSortMode('state'), 'title');
+  assert.equal(cycleMemberSortMode('title'), 'kind');
 });
 
 test('cycleFocusPane moves forward and backward', () => {
@@ -152,4 +162,71 @@ test('buildMemberRows groups issues and pull requests and selection skips header
 
 test('formatMemberListHeader aligns the member table columns', () => {
   assert.equal(formatMemberListHeader(), 'number  state  updated title');
+  assert.equal(formatMemberListHeader('recent'), 'number  state  updated*title');
+});
+
+test('buildMemberRows can sort members by recent without group headers', () => {
+  const detail: TuiClusterDetail = {
+    clusterId: 1,
+    displayTitle: 'Cluster 1',
+    isClosed: false,
+    closedAtLocal: null,
+    closeReasonLocal: null,
+    totalCount: 3,
+    issueCount: 2,
+    pullRequestCount: 1,
+    latestUpdatedAt: '2026-03-09T11:00:00Z',
+    representativeThreadId: 10,
+    representativeNumber: 42,
+    representativeKind: 'issue',
+    members: [
+      {
+        id: 10,
+        number: 42,
+        kind: 'issue',
+        isClosed: false,
+        title: 'Issue one',
+        updatedAtGh: '2026-03-09T09:00:00Z',
+        htmlUrl: 'https://example.com/42',
+        labels: [],
+        clusterScore: null,
+      },
+      {
+        id: 11,
+        number: 43,
+        kind: 'pull_request',
+        isClosed: false,
+        title: 'PR one',
+        updatedAtGh: '2026-03-09T11:00:00Z',
+        htmlUrl: 'https://example.com/43',
+        labels: [],
+        clusterScore: null,
+      },
+      {
+        id: 12,
+        number: 44,
+        kind: 'issue',
+        isClosed: true,
+        title: 'Issue closed',
+        updatedAtGh: '2026-03-09T10:00:00Z',
+        htmlUrl: 'https://example.com/44',
+        labels: [],
+        clusterScore: null,
+      },
+    ],
+  };
+
+  const rows = buildMemberRows(detail, { sortMode: 'recent' });
+  assert.equal(rows.length, 4);
+  assert.match(rows[1]?.label ?? '', /#43/);
+  assert.match(rows[2]?.label ?? '', /#44/);
+  assert.match(rows[3]?.label ?? '', /#42/);
+});
+
+test('resolveMemberHeaderSortFromClick maps member header columns to sort modes', () => {
+  assert.equal(resolveMemberHeaderSortFromClick(0, 'kind'), 'number');
+  assert.equal(resolveMemberHeaderSortFromClick(8, 'kind'), 'state');
+  assert.equal(resolveMemberHeaderSortFromClick(15, 'kind'), 'recent');
+  assert.equal(resolveMemberHeaderSortFromClick(23, 'kind'), 'title');
+  assert.equal(resolveMemberHeaderSortFromClick(23, 'title'), 'kind');
 });

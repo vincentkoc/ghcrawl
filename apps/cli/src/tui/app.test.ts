@@ -263,6 +263,8 @@ test('buildHelpContent includes the full key command list', () => {
   assert.match(content, /TUI only reads local SQLite/);
   assert.match(content, /default cluster filter is 1\+/);
   assert.match(content, /default sort is size/);
+  assert.match(content, /m\s+cycle member sort mode/);
+  assert.match(content, /click the member header to sort/);
   assert.match(content, /right-click opens pane actions/);
   assert.match(content, /p\s+open the repository browser/);
   assert.match(content, /l\s+toggle wide layout/);

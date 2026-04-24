@@ -14,6 +14,7 @@ import type {
 import { getTuiRepositoryPreference, writeTuiRepositoryPreference } from '@ghcrawl/api-core';
 import {
   buildMemberRows,
+  cycleMemberSortMode,
   cycleFocusPane,
   cycleMinSizeFilter,
   cycleSortMode,
@@ -21,8 +22,10 @@ import {
   formatRelativeTime,
   moveSelectableIndex,
   preserveSelectedId,
+  resolveMemberHeaderSortFromClick,
   type MemberListRow,
   type TuiFocusPane,
+  type TuiMemberSortMode,
   type TuiMinSizeFilter,
 } from './state.js';
 import { computeTuiLayout } from './layout.js';
@@ -123,6 +126,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     ? getTuiRepositoryPreference(params.service.config, currentRepository.owner, currentRepository.repo)
     : { sortMode: 'size' as TuiClusterSortMode, minClusterSize: 1 as TuiMinSizeFilter, wideLayout: 'columns' as TuiWideLayoutPreference };
   let sortMode: TuiClusterSortMode = initialPreference.sortMode;
+  let memberSortMode: TuiMemberSortMode = 'kind';
   let minSize: TuiMinSizeFilter = initialPreference.minClusterSize;
   let wideLayout: TuiWideLayoutPreference = initialPreference.wideLayout;
   let showClosed = true;
@@ -142,6 +146,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   const threadDetailCache = new Map<number, ThreadDetailCacheEntry>();
   let modalOpen = false;
   let suppressNextClusterSelect = false;
+  let suppressNextMemberSelect = false;
 
   const clearCaches = (): void => {
     clusterDetailCache.clear();
@@ -229,7 +234,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         refreshAll(true);
         return false;
       }
-      memberRows = buildMemberRows(clusterDetail, { includeClosedMembers: showClosed });
+      memberRows = buildMemberRows(clusterDetail, { includeClosedMembers: showClosed, sortMode: memberSortMode });
       selectedMemberThreadId = threadId;
       memberIndex = findSelectableIndex(memberRows, selectedMemberThreadId);
       loadSelectedThreadDetail(false);
@@ -289,7 +294,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     }
 
     if (selectedClusterId !== null && clusterDetail) {
-      memberRows = buildMemberRows(clusterDetail, { includeClosedMembers: showClosed });
+      memberRows = buildMemberRows(clusterDetail, { includeClosedMembers: showClosed, sortMode: memberSortMode });
       selectedMemberThreadId = preserveSelectedId(
         memberRows.filter((row) => row.selectable).map((row) => row.threadId),
         previousMemberId,
@@ -342,7 +347,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         ? `#${snapshot.stats.latestClusterRunId} ${formatRelativeTime(snapshot.stats.latestClusterRunFinishedAt ?? null)}`
         : 'never';
     widgets.header.setContent(
-      `{bold}${repoLabel}{/bold}  {cyan-fg}${snapshot?.stats.openPullRequestCount ?? 0} PR{/cyan-fg}  {green-fg}${snapshot?.stats.openIssueCount ?? 0} issues{/green-fg}  GH:${ghStatus}  Emb:${embedStatus}  Cl:${clusterStatus}  sort:${sortMode}  min:${minSize === 0 ? 'all' : `${minSize}+`}  layout:${wideLayout === 'columns' ? 'cols' : 'stack'}  closed:${showClosed ? 'shown' : 'hidden'}  filter:${search || 'none'}`,
+      `{bold}${repoLabel}{/bold}  {cyan-fg}${snapshot?.stats.openPullRequestCount ?? 0} PR{/cyan-fg}  {green-fg}${snapshot?.stats.openIssueCount ?? 0} issues{/green-fg}  GH:${ghStatus}  Emb:${embedStatus}  Cl:${clusterStatus}  sort:${sortMode}  members:${memberSortMode}  min:${minSize === 0 ? 'all' : `${minSize}+`}  layout:${wideLayout === 'columns' ? 'cols' : 'stack'}  closed:${showClosed ? 'shown' : 'hidden'}  filter:${search || 'none'}`,
     );
 
     isRendering = true;
@@ -363,7 +368,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     updatePaneStyles(widgets, focusPane);
     const footerLines = [
       activityLines.at(-1) ?? status,
-      `focus:${focusPane} sort:${sortMode} min:${minSize === 0 ? 'all' : `${minSize}+`}  Tab focus  / filter  s sort  f min  # jump  o open  h help  q quit`,
+      `focus:${focusPane} sort:${sortMode} members:${memberSortMode} min:${minSize === 0 ? 'all' : `${minSize}+`}  Tab focus  / filter  s sort  m members  f min  o open  h help`,
     ];
     widgets.footer.setContent(footerLines.join('\n'));
     widgets.screen.render();
@@ -447,6 +452,29 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     refreshAll(true);
   };
 
+  const setMemberSortMode = (nextMemberSortMode: TuiMemberSortMode): void => {
+    if (memberSortMode === nextMemberSortMode) {
+      return;
+    }
+    const previousMemberId = selectedMemberThreadId;
+    memberSortMode = nextMemberSortMode;
+    if (clusterDetail) {
+      memberRows = buildMemberRows(clusterDetail, { includeClosedMembers: showClosed, sortMode: memberSortMode });
+      selectedMemberThreadId = preserveSelectedId(
+        memberRows.filter((row) => row.selectable).map((row) => row.threadId),
+        previousMemberId,
+      );
+      memberIndex = findSelectableIndex(memberRows, selectedMemberThreadId);
+      loadSelectedThreadDetail(false);
+    }
+    status = `Member sort: ${memberSortMode}`;
+    render();
+  };
+
+  const toggleMemberSortMode = (): void => {
+    setMemberSortMode(cycleMemberSortMode(memberSortMode));
+  };
+
   const setMinSize = (nextMinSize: TuiMinSizeFilter): void => {
     if (minSize === nextMinSize) {
       return;
@@ -473,7 +501,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         refreshAll(true);
         return;
       }
-      memberRows = buildMemberRows(clusterDetail, { includeClosedMembers: showClosed });
+      memberRows = buildMemberRows(clusterDetail, { includeClosedMembers: showClosed, sortMode: memberSortMode });
       selectedMemberThreadId = preserveSelectedId(
         memberRows.filter((row) => row.selectable).map((row) => row.threadId),
         null,
@@ -692,6 +720,10 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         : []),
       { label: 'Sort by size', run: () => setSortMode('size') },
       { label: 'Sort by recent', run: () => setSortMode('recent') },
+      { label: 'Member sort grouped', run: () => setMemberSortMode('kind') },
+      { label: 'Member sort recent', run: () => setMemberSortMode('recent') },
+      { label: 'Member sort number', run: () => setMemberSortMode('number') },
+      { label: 'Member sort state', run: () => setMemberSortMode('state') },
       { label: 'Min size 1+', run: () => setMinSize(1) },
       { label: 'Min size 10+', run: () => setMinSize(10) },
       { label: 'Min size all', run: () => setMinSize(0) },
@@ -707,6 +739,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     { label: 'Repository browser', run: browseRepositories },
     { label: 'Sort by size', run: () => setSortMode('size') },
     { label: 'Sort by recent', run: () => setSortMode('recent') },
+    { label: 'Member sort grouped', run: () => setMemberSortMode('kind') },
+    { label: 'Member sort recent', run: () => setMemberSortMode('recent') },
     { label: 'Min size 1+', run: () => setMinSize(1) },
     { label: 'Min size 10+', run: () => setMinSize(10) },
     { label: 'Min size all', run: () => setMinSize(0) },
@@ -965,6 +999,10 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     if (modalOpen) return;
     toggleSortMode();
   });
+  widgets.screen.key(['m'], () => {
+    if (modalOpen) return;
+    toggleMemberSortMode();
+  });
   widgets.screen.key(['f'], () => {
     if (modalOpen) return;
     setMinSize(cycleMinSizeFilter(minSize));
@@ -1038,6 +1076,10 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   });
   widgets.members.on('select item', (_item, index) => {
     if (isRendering || modalOpen) return;
+    if (suppressNextMemberSelect) {
+      suppressNextMemberSelect = false;
+      return;
+    }
     focusPane = 'members';
     widgets.members.focus();
     selectMemberIndex(Number(index));
@@ -1049,10 +1091,17 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     updateFocus('detail');
   });
   widgets.members.on('mousedown', (event: MouseEventArg) => {
-    if (isRendering || modalOpen || event.button !== 'right') return;
+    if (isRendering || modalOpen) return;
     focusPane = 'members';
     widgets.members.focus();
     const itemIndex = getListItemIndexFromMouse(widgets.members, event);
+    if (event.button === 'left' && itemIndex === 0) {
+      suppressNextMemberSelect = true;
+      const relativeX = Math.max(0, Number(event.x) - Number(widgets.members.aleft) - 2);
+      setMemberSortMode(resolveMemberHeaderSortFromClick(relativeX, memberSortMode));
+      return;
+    }
+    if (event.button !== 'right') return;
     const row = itemIndex !== null && itemIndex >= 0 && itemIndex < memberRows.length ? memberRows[itemIndex] : null;
     if (!row?.selectable) {
       openContextMenu('Members', clusterContextItems(), event);
@@ -1437,13 +1486,14 @@ export function buildHelpContent(): string {
     'Left / Right      cycle focus backward or forward across panes',
     'Up / Down         move selection, or scroll detail when detail is focused',
     'Enter             clusters -> members, members -> detail',
-    'Mouse             click to focus/select; click cluster header to sort; right-click opens pane actions; wheel scrolls',
+    'Mouse             click to focus/select; click list headers to sort; right-click opens pane actions; wheel scrolls',
     'PgUp / PgDn       page through the focused pane or this help popup faster',
     'Home / End        jump to the top or bottom of detail or help',
     '',
     '{bold}Views And Filters{/bold}',
     '#                 jump directly to an issue or PR number',
     's                 cycle cluster sort mode',
+    'm                 cycle member sort mode',
     'f                 cycle minimum cluster size filter',
     'l                 toggle wide layout: columns vs. wide-left stacked-right',
     'x                 show or hide locally closed clusters and members',
@@ -1463,6 +1513,7 @@ export function buildHelpContent(): string {
     'The TUI only reads local SQLite. Run ghcrawl sync, ghcrawl embed, and ghcrawl cluster from the shell to update data.',
     'The default cluster filter is 1+, so solo clusters are visible unless you raise it with f.',
     'The default sort is size. Press s to toggle size and recent.',
+    'Member rows default to issue/PR grouping. Press m or click the member header to sort by updated, number, state, or title.',
     'Mouse clicks focus panes; clicking an already selected row advances to the next pane. Right-click works on every pane.',
     'Clusters show C<clusterId> so the cluster id is easy to copy into CLI or skill flows.',
     'The footer only shows the short command list. Open help to see the full list.',

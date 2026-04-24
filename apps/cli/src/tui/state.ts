@@ -2,14 +2,23 @@ import type { TuiClusterDetail, TuiClusterSortMode, TuiClusterSummary } from '@g
 
 export type TuiFocusPane = 'clusters' | 'members' | 'detail';
 export type TuiMinSizeFilter = 0 | 1 | 2 | 10 | 20 | 50;
+export type TuiMemberSortMode = 'kind' | 'recent' | 'number' | 'state' | 'title';
 
 export type MemberListRow =
   | { key: string; label: string; selectable: false }
   | { key: string; label: string; selectable: true; threadId: number; isClosed: boolean; kind: 'issue' | 'pull_request' };
 
 export const SORT_MODE_ORDER: TuiClusterSortMode[] = ['size', 'recent'];
+export const MEMBER_SORT_MODE_ORDER: TuiMemberSortMode[] = ['kind', 'recent', 'number', 'state', 'title'];
 export const MIN_SIZE_FILTER_ORDER: TuiMinSizeFilter[] = [1, 2, 10, 20, 50, 0];
 export const FOCUS_PANE_ORDER: TuiFocusPane[] = ['clusters', 'members', 'detail'];
+
+const MEMBER_NUMBER_WIDTH = 8;
+const MEMBER_STATE_WIDTH = 7;
+const MEMBER_UPDATED_WIDTH = 8;
+const MEMBER_STATE_START = MEMBER_NUMBER_WIDTH;
+const MEMBER_UPDATED_START = MEMBER_STATE_START + MEMBER_STATE_WIDTH;
+const MEMBER_TITLE_START = MEMBER_UPDATED_START + MEMBER_UPDATED_WIDTH;
 
 export function cycleSortMode(current: TuiClusterSortMode): TuiClusterSortMode {
   const index = SORT_MODE_ORDER.indexOf(current);
@@ -19,6 +28,11 @@ export function cycleSortMode(current: TuiClusterSortMode): TuiClusterSortMode {
 export function cycleMinSizeFilter(current: TuiMinSizeFilter): TuiMinSizeFilter {
   const index = MIN_SIZE_FILTER_ORDER.indexOf(current);
   return MIN_SIZE_FILTER_ORDER[(index + 1) % MIN_SIZE_FILTER_ORDER.length] ?? 10;
+}
+
+export function cycleMemberSortMode(current: TuiMemberSortMode): TuiMemberSortMode {
+  const index = MEMBER_SORT_MODE_ORDER.indexOf(current);
+  return MEMBER_SORT_MODE_ORDER[(index + 1) % MEMBER_SORT_MODE_ORDER.length] ?? 'kind';
 }
 
 export function cycleFocusPane(current: TuiFocusPane, direction: 1 | -1 = 1): TuiFocusPane {
@@ -46,43 +60,63 @@ export function preserveSelectedId(ids: number[], selectedId: number | null): nu
   return ids[0] ?? null;
 }
 
-export function buildMemberRows(detail: TuiClusterDetail | null, options?: { includeClosedMembers?: boolean }): MemberListRow[] {
+export function buildMemberRows(detail: TuiClusterDetail | null, options?: { includeClosedMembers?: boolean; sortMode?: TuiMemberSortMode }): MemberListRow[] {
   if (!detail) return [];
   const includeClosedMembers = options?.includeClosedMembers ?? true;
+  const sortMode = options?.sortMode ?? 'kind';
   const visibleMembers = includeClosedMembers ? detail.members : detail.members.filter((member) => !member.isClosed);
+  const rows: MemberListRow[] = [{ key: 'members-table-header', label: `{bold}${formatMemberListHeader(sortMode)}{/bold}`, selectable: false }];
+
+  if (sortMode !== 'kind') {
+    appendMemberRows(rows, sortMembers(visibleMembers, sortMode));
+    return rows;
+  }
+
   const issues = visibleMembers.filter((member) => member.kind === 'issue');
   const pullRequests = visibleMembers.filter((member) => member.kind === 'pull_request');
-  const rows: MemberListRow[] = [{ key: 'members-table-header', label: `{bold}${formatMemberListHeader()}{/bold}`, selectable: false }];
-
   if (issues.length > 0) {
     rows.push({ key: 'issues-header', label: `ISSUES (${issues.length})`, selectable: false });
-    for (const issue of issues) {
-      rows.push({
-        key: `thread-${issue.id}`,
-        label: formatMemberLabel(issue.number, issue.title, issue.updatedAtGh, issue.isClosed),
-        selectable: true,
-        threadId: issue.id,
-        isClosed: issue.isClosed,
-        kind: issue.kind,
-      });
-    }
+    appendMemberRows(rows, issues);
   }
 
   if (pullRequests.length > 0) {
     rows.push({ key: 'pulls-header', label: `PULL REQUESTS (${pullRequests.length})`, selectable: false });
-    for (const pullRequest of pullRequests) {
-      rows.push({
-        key: `thread-${pullRequest.id}`,
-        label: formatMemberLabel(pullRequest.number, pullRequest.title, pullRequest.updatedAtGh, pullRequest.isClosed),
-        selectable: true,
-        threadId: pullRequest.id,
-        isClosed: pullRequest.isClosed,
-        kind: pullRequest.kind,
-      });
-    }
+    appendMemberRows(rows, pullRequests);
   }
 
   return rows;
+}
+
+type TuiMember = TuiClusterDetail['members'][number];
+
+function appendMemberRows(rows: MemberListRow[], members: TuiMember[]): void {
+  for (const member of members) {
+    rows.push({
+      key: `thread-${member.id}`,
+      label: formatMemberLabel(member.number, member.title, member.updatedAtGh, member.isClosed),
+      selectable: true,
+      threadId: member.id,
+      isClosed: member.isClosed,
+      kind: member.kind,
+    });
+  }
+}
+
+function sortMembers(members: TuiMember[], sortMode: TuiMemberSortMode): TuiMember[] {
+  return members.slice().sort((left, right) => {
+    const leftTime = left.updatedAtGh ? Date.parse(left.updatedAtGh) : 0;
+    const rightTime = right.updatedAtGh ? Date.parse(right.updatedAtGh) : 0;
+    if (sortMode === 'recent') {
+      return rightTime - leftTime || right.number - left.number;
+    }
+    if (sortMode === 'number') {
+      return left.number - right.number;
+    }
+    if (sortMode === 'state') {
+      return Number(left.isClosed) - Number(right.isClosed) || rightTime - leftTime || left.number - right.number;
+    }
+    return normalizeMemberTitle(left.title).localeCompare(normalizeMemberTitle(right.title)) || left.number - right.number;
+  });
 }
 
 export function findSelectableIndex(rows: MemberListRow[], threadId: number | null): number {
@@ -118,15 +152,27 @@ function compareClusters(left: TuiClusterSummary, right: TuiClusterSummary, sort
 
 function formatMemberLabel(number: number, title: string, updatedAtGh: string | null, isClosed: boolean): string {
   const updated = formatRelativeTime(updatedAtGh);
-  const numberLabel = `#${number}`.padEnd(8).slice(0, 8);
-  const status = (isClosed ? 'closed' : 'open').padEnd(7);
-  const age = updated.padEnd(8).slice(0, 8);
+  const numberLabel = `#${number}`.padEnd(MEMBER_NUMBER_WIDTH).slice(0, MEMBER_NUMBER_WIDTH);
+  const status = (isClosed ? 'closed' : 'open').padEnd(MEMBER_STATE_WIDTH);
+  const age = updated.padEnd(MEMBER_UPDATED_WIDTH).slice(0, MEMBER_UPDATED_WIDTH);
   const label = escapeBlessedInline(`${numberLabel}${status}${age}${normalizeMemberTitle(title)}`);
   return isClosed ? `{gray-fg}${label}{/gray-fg}` : label;
 }
 
-export function formatMemberListHeader(): string {
-  return `${'number'.padEnd(8)}${'state'.padEnd(7)}${'updated'.padEnd(8)}title`;
+export function formatMemberListHeader(sortMode: TuiMemberSortMode = 'kind'): string {
+  const number = (sortMode === 'number' ? 'number*' : 'number').padEnd(MEMBER_NUMBER_WIDTH);
+  const state = (sortMode === 'state' ? 'state*' : 'state').padEnd(MEMBER_STATE_WIDTH);
+  const updated = (sortMode === 'recent' ? 'updated*' : 'updated').padEnd(MEMBER_UPDATED_WIDTH);
+  const title = sortMode === 'title' ? 'title*' : 'title';
+  return `${number}${state}${updated}${title}`;
+}
+
+export function resolveMemberHeaderSortFromClick(relativeX: number, currentSortMode: TuiMemberSortMode): TuiMemberSortMode {
+  if (relativeX < MEMBER_STATE_START) return 'number';
+  if (relativeX < MEMBER_UPDATED_START) return 'state';
+  if (relativeX < MEMBER_TITLE_START) return 'recent';
+  if (currentSortMode === 'title') return 'kind';
+  return 'title';
 }
 
 export function formatRelativeTime(value: string | null, now: Date = new Date()): string {

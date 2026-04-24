@@ -55,7 +55,7 @@ import {
 
 import { buildClusters, buildRefinedClusters, buildSizeBoundedClusters } from './cluster/build.js';
 import { buildCodeSnapshotSignature } from './cluster/code-signature.js';
-import { buildDeterministicClusterGraph } from './cluster/deterministic-engine.js';
+import { buildDeterministicClusterGraph, extractDeterministicRefs } from './cluster/deterministic-engine.js';
 import { buildSourceKindEdges } from './cluster/exact-edges.js';
 import { humanKeyForValue } from './cluster/human-key.js';
 import { LLM_KEY_SUMMARY_PROMPT_VERSION, llmKeyInputHash } from './cluster/llm-key-summary.js';
@@ -73,7 +73,10 @@ import {
   upsertThreadCodeSnapshot,
   upsertThreadKeySummary,
 } from './cluster/persistent-store.js';
-import type { DeterministicThreadFingerprint } from './cluster/thread-fingerprint.js';
+import {
+  buildDeterministicThreadFingerprint,
+  THREAD_FINGERPRINT_ALGORITHM_VERSION,
+} from './cluster/thread-fingerprint.js';
 import {
   ensureRuntimeDirs,
   isLikelyGitHubToken,
@@ -1596,8 +1599,8 @@ export class GHCrawlService {
         });
       } else {
         const deterministicItems = this.loadDeterministicClusterableThreadMeta(repository.id);
+        this.materializeLatestDeterministicFingerprints(deterministicItems, params.onProgress);
         const deterministic = buildDeterministicClusterGraph(deterministicItems, { topK: Math.max(k * 8, 64) });
-        this.persistDeterministicFingerprints(deterministicItems, deterministic.fingerprints);
         items = deterministicItems.map((item) => ({ id: item.id, number: item.number, title: item.title }));
         aggregatedEdges = new Map();
         for (const edge of deterministic.edges) {
@@ -4493,20 +4496,25 @@ export class GHCrawlService {
     return out;
   }
 
-  private persistDeterministicFingerprints(
+  private materializeLatestDeterministicFingerprints(
     items: Array<{
       id: number;
+      number: number;
+      kind: 'issue' | 'pull_request';
       title: string;
       body: string | null;
       labels: string[];
       rawJson: string;
       updatedAtGh: string | null;
+      changedFiles: string[];
+      hunkSignatures: string[];
+      patchIds: string[];
     }>,
-    fingerprints: Map<number, DeterministicThreadFingerprint>,
-  ): void {
+    onProgress?: (message: string) => void,
+  ): { computed: number; skipped: number } {
+    let computed = 0;
+    let skipped = 0;
     for (const item of items) {
-      const fingerprint = fingerprints.get(item.id);
-      if (!fingerprint) continue;
       const revisionId = upsertThreadRevision(this.db, {
         threadId: item.id,
         sourceUpdatedAt: item.updatedAtGh,
@@ -4515,8 +4523,38 @@ export class GHCrawlService {
         labels: item.labels,
         rawJson: item.rawJson,
       });
+      const existing = this.db
+        .prepare(
+          `select id
+           from thread_fingerprints
+           where thread_revision_id = ?
+             and algorithm_version = ?
+           limit 1`,
+        )
+        .get(revisionId, THREAD_FINGERPRINT_ALGORITHM_VERSION) as { id: number } | undefined;
+      if (existing) {
+        skipped += 1;
+        continue;
+      }
+
+      const inferredRefs = extractDeterministicRefs(`${item.title}\n${item.body ?? ''}`);
+      const fingerprint = buildDeterministicThreadFingerprint({
+        threadId: item.id,
+        number: item.number,
+        kind: item.kind,
+        title: item.title,
+        body: item.body,
+        labels: item.labels,
+        linkedRefs: inferredRefs,
+        changedFiles: item.changedFiles,
+        hunkSignatures: item.hunkSignatures,
+        patchIds: item.patchIds,
+      });
       upsertThreadFingerprint(this.db, { threadRevisionId: revisionId, fingerprint });
+      computed += 1;
     }
+    onProgress?.(`[fingerprint] latest revisions computed=${computed} skipped=${skipped}`);
+    return { computed, skipped };
   }
 
   private loadNormalizedActiveVectors(repoId: number): Array<{ id: number; number: number; title: string; embedding: number[] }> {

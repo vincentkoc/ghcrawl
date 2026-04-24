@@ -28,7 +28,7 @@ export type DeterministicClusterResult = {
   fingerprints: Map<number, DeterministicThreadFingerprint>;
 };
 
-function extractRefs(value: string | null): string[] {
+export function extractDeterministicRefs(value: string | null): string[] {
   const refs = new Set<string>();
   for (const match of value?.matchAll(REF_RE) ?? []) {
     refs.add(match[1]);
@@ -83,7 +83,7 @@ export function buildDeterministicClusterGraph(
   const fingerprints = new Map<number, DeterministicThreadFingerprint>();
   const titleById = new Map<number, string>();
   for (const input of inputs) {
-    const inferredRefs = extractRefs(`${input.title}\n${input.body ?? ''}`);
+    const inferredRefs = extractDeterministicRefs(`${input.title}\n${input.body ?? ''}`);
     fingerprints.set(
       input.id,
       buildDeterministicThreadFingerprint({

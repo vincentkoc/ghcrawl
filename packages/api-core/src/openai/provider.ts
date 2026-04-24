@@ -3,7 +3,12 @@ import { APIConnectionError, APIConnectionTimeoutError, APIError, RateLimitError
 import { zodTextFormat } from 'openai/helpers/zod';
 import { z } from 'zod';
 
-import { LLM_KEY_SUMMARY_SYSTEM_PROMPT, llmKeySummarySchema, type LlmKeySummary } from '../cluster/llm-key-summary.js';
+import {
+  LLM_KEY_SUMMARY_SYSTEM_PROMPT,
+  llmKeySummarySchema,
+  parseLlmKeySummary,
+  type LlmKeySummary,
+} from '../cluster/llm-key-summary.js';
 
 export type SummaryResult = {
   problemSummary: string;
@@ -156,7 +161,7 @@ export class OpenAiProvider implements AiProvider {
           throw new Error(`empty structured output${response.incomplete_details?.reason ? ` (${response.incomplete_details.reason})` : ''}`);
         }
         return {
-          summary: llmKeySummarySchema.parse(JSON.parse(raw)),
+          summary: parseLlmKeySummary(JSON.parse(raw)),
           usage: response.usage
             ? {
                 inputTokens: response.usage.input_tokens,

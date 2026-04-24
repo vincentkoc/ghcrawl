@@ -12,15 +12,29 @@ mechanism: one sentence, max 160 chars, cause or implementation approach.
 Use concrete nouns from the input. Do not mention uncertainty. Do not add advice.`;
 
 export const llmKeySummarySchema = z.object({
-  intent: z.string().trim().min(1).max(120),
-  surface: z.string().trim().min(1).max(120),
-  mechanism: z.string().trim().min(1).max(160),
+  intent: z.string().trim().min(1),
+  surface: z.string().trim().min(1),
+  mechanism: z.string().trim().min(1),
 });
 
 export type LlmKeySummary = z.infer<typeof llmKeySummarySchema>;
 
 export function parseLlmKeySummary(value: unknown): LlmKeySummary {
-  return llmKeySummarySchema.parse(value);
+  const summary = llmKeySummarySchema.parse(value);
+  return {
+    intent: clampSentence(summary.intent, 120),
+    surface: clampSentence(summary.surface, 120),
+    mechanism: clampSentence(summary.mechanism, 160),
+  };
+}
+
+function clampSentence(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return normalized.slice(0, maxLength - 1).trimEnd() + '.';
 }
 
 export function llmKeyEmbeddingText(summary: LlmKeySummary): string {

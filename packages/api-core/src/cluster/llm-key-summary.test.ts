@@ -27,16 +27,29 @@ test('parseLlmKeySummary accepts the strict 3-line contract', () => {
   );
 });
 
-test('parseLlmKeySummary rejects missing or oversized fields', () => {
+test('parseLlmKeySummary rejects missing fields', () => {
   assert.throws(
     () =>
       parseLlmKeySummary({
-        intent: 'x'.repeat(121),
+        intent: '',
         surface: 'CLI',
         mechanism: 'Patch retry loop.',
       }),
-    /Too big/,
+    /Too small/,
   );
+});
+
+test('parseLlmKeySummary clamps oversized fields deterministically', () => {
+  const summary = parseLlmKeySummary({
+    intent: 'x'.repeat(140),
+    surface: 'y'.repeat(140),
+    mechanism: 'z'.repeat(180),
+  });
+
+  assert.equal(summary.intent.length, 120);
+  assert.equal(summary.surface.length, 120);
+  assert.equal(summary.mechanism.length, 160);
+  assert.equal(summary.intent.at(-1), '.');
 });
 
 test('llmKeyInputHash is deterministic and prompt-version scoped', () => {

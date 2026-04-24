@@ -29,17 +29,17 @@ export type SimilarityEvidenceBreakdown = FingerprintPairBreakdown & {
 };
 
 export const DEFAULT_EVIDENCE_SCORE_CONFIG: EvidenceScoreConfig = {
-  minScore: 0.48,
+  minScore: 0.36,
   strongScore: 0.74,
-  weightLineage: 0.25,
-  weightStructure: 0.22,
-  weightLinkedRefs: 0.16,
-  weightTitle: 0.08,
+  weightLineage: 0.18,
+  weightStructure: 0.36,
+  weightLinkedRefs: 0.14,
+  weightTitle: 0.10,
   weightMinhash: 0.10,
   weightSimhash: 0.08,
-  weightWinnow: 0.07,
-  weightEmbedding: 0.02,
-  weightLlmKey: 0.02,
+  weightWinnow: 0.04,
+  weightEmbedding: 0.03,
+  weightLlmKey: 0.03,
 };
 
 function clamp01(value: number | null | undefined): number {
@@ -71,12 +71,15 @@ export function scoreSimilarityEvidence(
   if (
     base.lineage >= 0.8 ||
     base.hunkOverlap >= 0.8 ||
+    (base.fileOverlap >= 0.8 && (base.titleOverlap >= 0.15 || base.tokenSimhash >= 0.5 || base.tokenMinhash >= 0.2)) ||
     (base.linkedRefOverlap >= 0.8 && (base.structure >= 0.25 || base.titleOverlap >= 0.25)) ||
     score >= config.strongScore
   ) {
     tier = 'strong';
   } else if (
     score >= config.minScore ||
+    base.fileOverlap >= 0.4 ||
+    (base.moduleOverlap >= 0.5 && base.titleOverlap >= 0.15) ||
     (base.titleOverlap >= 0.25 && base.tokenSimhash >= 0.55) ||
     (base.structure >= 0.5 && base.tokenSimhash >= 0.55) ||
     (base.linkedRefOverlap >= 0.5 && base.tokenMinhash >= 0.25)

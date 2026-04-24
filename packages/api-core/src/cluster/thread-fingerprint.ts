@@ -198,7 +198,7 @@ export function compareDeterministicFingerprints(
     moduleOverlap,
     hunkOverlap,
     patchOverlap,
-    structure: 0.7 * hunkOverlap + 0.2 * fileOverlap + 0.1 * moduleOverlap,
+    structure: Math.max(hunkOverlap, patchOverlap, fileOverlap, 0.65 * moduleOverlap),
     lineage: patchOverlap,
   };
 }

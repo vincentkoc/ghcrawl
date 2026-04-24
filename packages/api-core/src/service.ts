@@ -426,10 +426,10 @@ const KEY_SUMMARY_MAX_UNREAD = 48;
 const SUMMARY_PROMPT_VERSION = 'v1';
 const ACTIVE_EMBED_DIMENSIONS = 1024;
 const ACTIVE_EMBED_PIPELINE_VERSION = 'vectorlite-1024-v1';
-const DEFAULT_CLUSTER_MIN_SCORE = 0.76;
-const DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE = 0.48;
+const DEFAULT_CLUSTER_MIN_SCORE = 0.74;
+const DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE = 0.36;
 const DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE = 0.9;
-const DEFAULT_CLUSTER_MAX_SIZE = 48;
+const DEFAULT_CLUSTER_MAX_SIZE = 64;
 const VECTORLITE_CLUSTER_EXPANDED_K = 24;
 const VECTORLITE_CLUSTER_EXPANDED_MULTIPLIER = 4;
 const VECTORLITE_CLUSTER_EXPANDED_CANDIDATE_K = 512;
@@ -2043,7 +2043,7 @@ export class GHCrawlService {
     const deterministicMinScore = Math.min(minScore, DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE);
     const crossKindMinScore = Math.max(minScore, DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE);
     const maxClusterSize = params.maxClusterSize ?? DEFAULT_CLUSTER_MAX_SIZE;
-    const k = params.k ?? 12;
+    const k = params.k ?? 16;
 
     try {
       const seedThread = params.threadNumber

@@ -72,6 +72,7 @@ test('doctor reports config path and successful auth smoke checks', async () => 
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => {
@@ -117,6 +118,7 @@ test('doctor reports invalid token format without attempting auth', async () => 
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -234,6 +236,7 @@ test('syncRepository defaults to metadata-only mode, preserves thread kind, and 
       listPullReviewCommentCalls += 1;
       return [];
     },
+    listPullFiles: async () => [],
   });
 
   try {
@@ -364,6 +367,7 @@ test('syncRepository fetches comments, reviews, and review comments when include
         },
       ];
     },
+    listPullFiles: async () => [],
   });
 
   try {
@@ -402,6 +406,7 @@ test('summarizeRepository excludes hydrated comments by default and reports toke
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     {
       checkAuth: async () => undefined,
@@ -510,6 +515,7 @@ test('summarizeRepository includes hydrated human comments when includeComments 
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     {
       checkAuth: async () => undefined,
@@ -617,6 +623,7 @@ test('summarizeRepository prices progress output using the configured summary mo
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     {
       checkAuth: async () => undefined,
@@ -708,6 +715,7 @@ test('purgeComments removes hydrated comments and refreshes canonical documents'
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -805,6 +813,7 @@ test('embedRepository batches multi-source embeddings and skips unchanged inputs
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     {
       checkAuth: async () => undefined,
@@ -912,6 +921,7 @@ test('listNeighbors uses the vectorlite sidecar for current active vectors', asy
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -972,6 +982,7 @@ test('embedRepository prunes closed vectors before reusing current active vector
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -1055,6 +1066,7 @@ test('embedRepository truncates oversized inputs before submission', async () =>
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -1179,6 +1191,7 @@ test('embedRepository isolates a failing oversized item from a mixed batch and r
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -1306,6 +1319,7 @@ test('embedRepository recovers from wrapped maximum input length errors by shrin
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -1430,6 +1444,7 @@ test('listNeighbors returns exact nearest neighbors for an embedded thread', () 
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -1513,6 +1528,7 @@ test('listAuthorThreads returns one author view with strongest same-author match
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -1586,6 +1602,7 @@ test('clusterRepository emits timed progress updates while identifying similarit
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -1642,6 +1659,7 @@ test('clusterRepository merges source kinds into one edge without directional du
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -1704,6 +1722,7 @@ test('clusterRepository prunes older cluster runs for the repo after a successfu
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -1770,6 +1789,7 @@ test('clusterRepository purges legacy embeddings and inline vector payloads afte
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -1875,6 +1895,7 @@ test('clusterRepository rebuilds a corrupted active vector store and retries', a
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -1963,6 +1984,7 @@ test('clusterRepository falls back to deterministic fingerprints when vectors ar
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -2046,6 +2068,7 @@ test('embedRepository rebuilds a corrupted active vector store during upsert', a
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -2100,6 +2123,7 @@ test('clusterExperiment falls back to active vectors when legacy embeddings are 
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     ai: {
       checkAuth: async () => undefined,
@@ -2165,6 +2189,7 @@ test('clusterRepository does not retain a parsed embedding cache in-process', as
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2218,6 +2243,7 @@ test('tui snapshot returns mixed issue and pull request counts with default rece
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2318,6 +2344,7 @@ test('tui cluster detail and thread detail expose members, summaries, and neighb
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2421,6 +2448,7 @@ test('getTuiThreadDetail prefers stored cluster neighbors over exact embedding s
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2511,6 +2539,7 @@ test('refreshRepository runs sync, embed, and cluster in order and returns the c
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
     {
       checkAuth: async () => undefined,
@@ -2556,6 +2585,7 @@ test('agent cluster summary and detail dumps expose repo stats, snippets, and su
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2706,6 +2736,7 @@ test('getTuiThreadDetail can skip neighbor loading for fast browse paths', () =>
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2782,6 +2813,7 @@ test('local thread closure updates default thread filters and auto-closes fully 
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2867,6 +2899,7 @@ test('manual cluster closure is hidden from JSON summaries by default but remain
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -2932,6 +2965,7 @@ test('excludeThreadFromCluster records a durable manual exclusion', () => {
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3007,6 +3041,7 @@ test('listDurableClusters returns stable slugs and governed member states', () =
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3088,6 +3123,7 @@ test('syncRepository records actors and repo stats from thread and comment autho
     ],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3195,6 +3231,7 @@ test('syncRepository reconciles stale open threads and marks confirmed closures 
     },
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3287,6 +3324,7 @@ test('syncRepository treats missing stale pull requests as closed and continues'
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3367,6 +3405,7 @@ test('syncRepository skips stale-open reconciliation for filtered crawls', async
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3431,6 +3470,7 @@ test('syncRepository leaves unseen stale open items alone by default when closed
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3499,6 +3539,7 @@ test('syncRepository performs direct stale-open reconciliation when fullReconcil
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3571,6 +3612,7 @@ test('syncRepository derives the default overlapping since window from the last 
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3675,6 +3717,7 @@ test('syncRepository uses an explicit since window for both open and closed over
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3744,6 +3787,7 @@ test('syncRepository skips the closed overlap sweep on the first full scan with 
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {
@@ -3774,6 +3818,7 @@ test('repository-scoped reads and neighbors do not leak across repos in the same
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   });
 
   try {

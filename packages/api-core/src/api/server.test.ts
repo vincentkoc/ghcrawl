@@ -48,6 +48,7 @@ test('health endpoint returns contract payload', async () => {
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -100,6 +101,7 @@ test('neighbors endpoint returns contract payload', async () => {
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -194,6 +196,7 @@ test('threads endpoint can filter by a bulk number list', async () => {
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -265,6 +268,7 @@ test('author-threads endpoint returns one author with strongest same-author matc
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -346,6 +350,7 @@ test('close-thread and includeClosed thread routes expose locally closed items',
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -431,6 +436,7 @@ test('exclude cluster member action records a durable override', async () => {
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -522,6 +528,7 @@ test('durable clusters endpoint returns stable cluster state', async () => {
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -588,6 +595,7 @@ test('server returns 400 for malformed request inputs', async () => {
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 
@@ -644,6 +652,7 @@ test('cluster summary and detail endpoints return contract payloads', async () =
       listIssueComments: async () => [],
       listPullReviews: async () => [],
       listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
     },
   });
 

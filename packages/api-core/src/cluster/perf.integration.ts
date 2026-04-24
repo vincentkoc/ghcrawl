@@ -181,6 +181,7 @@ function createGitHubStub(): GHCrawlService['github'] {
     listIssueComments: async () => [],
     listPullReviews: async () => [],
     listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
   };
 }
 

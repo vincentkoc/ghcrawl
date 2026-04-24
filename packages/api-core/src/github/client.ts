@@ -15,6 +15,7 @@ export type GitHubClient = {
   ) => Promise<Array<Record<string, unknown>>>;
   getIssue: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Record<string, unknown>>;
   getPull: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Record<string, unknown>>;
+  listPullFiles: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Array<Record<string, unknown>>>;
   listIssueComments: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Array<Record<string, unknown>>>;
   listPullReviews: (owner: string, repo: string, number: number, reporter?: GitHubReporter) => Promise<Array<Record<string, unknown>>>;
   listPullReviewComments: (
@@ -195,6 +196,20 @@ export function makeGitHubClient(options: RequestOptions): GitHubClient {
         const response = await octokit.rest.pulls.get({ owner, repo, pull_number: number });
         return response.data as Record<string, unknown>;
       });
+    },
+    async listPullFiles(owner, repo, number, reporter) {
+      return paginate(
+        `GET /repos/${owner}/${repo}/pulls/${number}/files per_page=100`,
+        undefined,
+        reporter,
+        (octokit) =>
+          octokit.paginate.iterator(octokit.rest.pulls.listFiles, {
+            owner,
+            repo,
+            pull_number: number,
+            per_page: 100,
+          }) as AsyncIterable<OctokitPage<Record<string, unknown>>>,
+      );
     },
     async listIssueComments(owner, repo, number, reporter) {
       return paginate(

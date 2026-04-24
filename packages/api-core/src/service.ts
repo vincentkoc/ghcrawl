@@ -1681,7 +1681,16 @@ export class GHCrawlService {
     threadNumber?: number;
     limit?: number;
     onProgress?: (message: string) => void;
-  }): Promise<{ runId: number; generated: number; skipped: number; inputTokens: number; outputTokens: number; totalTokens: number }> {
+  }): Promise<{
+    runId: number;
+    generated: number;
+    skipped: number;
+    failed: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    errorSamples: Array<{ number: number; error: string }>;
+  }> {
     const ai = this.requireAi();
     if (!ai.generateKeySummary) {
       throw new Error('Configured AI provider does not support key summary generation.');
@@ -1719,9 +1728,11 @@ export class GHCrawlService {
 
       let generated = 0;
       let skipped = 0;
+      let failed = 0;
       let inputTokens = 0;
       let outputTokens = 0;
       let totalTokens = 0;
+      const errorSamples: Array<{ number: number; error: string }> = [];
 
       for (const row of rows) {
         const labels = parseArray(row.labels_json);
@@ -1756,10 +1767,21 @@ export class GHCrawlService {
           continue;
         }
 
-        const result = await ai.generateKeySummary({
-          model: this.config.summaryModel,
-          text: [`title: ${row.title}`, `labels: ${labels.join(', ')}`, `body: ${row.body ?? ''}`].join('\n'),
-        });
+        let result: Awaited<ReturnType<NonNullable<typeof ai.generateKeySummary>>>;
+        try {
+          result = await ai.generateKeySummary({
+            model: this.config.summaryModel,
+            text: [`title: ${row.title}`, `labels: ${labels.join(', ')}`, `body: ${row.body ?? ''}`].join('\n'),
+          });
+        } catch (error) {
+          failed += 1;
+          const message = error instanceof Error ? error.message : String(error);
+          if (errorSamples.length < 10) {
+            errorSamples.push({ number: row.number, error: message });
+          }
+          params.onProgress?.(`[key-summary] failed thread #${row.number}: ${message}`);
+          continue;
+        }
         upsertThreadKeySummary(this.db, {
           threadRevisionId: revisionId,
           summaryKind: 'llm_key_3line',
@@ -1778,7 +1800,7 @@ export class GHCrawlService {
         params.onProgress?.(`[key-summary] generated ${generated}/${rows.length} thread #${row.number}`);
       }
 
-      const payload = { runId, generated, skipped, inputTokens, outputTokens, totalTokens };
+      const payload = { runId, generated, skipped, failed, inputTokens, outputTokens, totalTokens, errorSamples };
       this.finishRun('summary_runs', runId, 'completed', payload);
       return payload;
     } catch (error) {

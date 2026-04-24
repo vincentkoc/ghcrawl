@@ -370,6 +370,18 @@ export type TuiSnapshot = {
   clusters: TuiClusterSummary[];
 };
 
+export type TuiRefreshState = {
+  repositoryUpdatedAt: string | null;
+  threadUpdatedAt: string | null;
+  threadClosedAt: string | null;
+  clusterClosedAt: string | null;
+  durableClusterUpdatedAt: string | null;
+  durableMembershipUpdatedAt: string | null;
+  latestSyncRunId: number | null;
+  latestEmbeddingRunId: number | null;
+  latestClusterRunId: number | null;
+};
+
 export type DoctorResult = {
   health: HealthResponse;
   github: {
@@ -3316,6 +3328,60 @@ export class GHCrawlService {
       stats,
       clusterRunId: latestRun.id,
       clusters,
+    };
+  }
+
+  getTuiRefreshState(params: { owner: string; repo: string }): TuiRefreshState {
+    const repository = this.requireRepository(params.owner, params.repo);
+    const threadState = this.db
+      .prepare(
+        `select
+           max(updated_at) as thread_updated_at,
+           max(closed_at_local) as thread_closed_at
+         from threads
+         where repo_id = ?`,
+      )
+      .get(repository.id) as { thread_updated_at: string | null; thread_closed_at: string | null };
+    const clusterState = this.db
+      .prepare(
+        `select max(closed_at_local) as cluster_closed_at
+         from clusters
+         where repo_id = ?`,
+      )
+      .get(repository.id) as { cluster_closed_at: string | null };
+    const durableClusterState = this.db
+      .prepare(
+        `select max(updated_at) as durable_cluster_updated_at
+         from cluster_groups
+         where repo_id = ?`,
+      )
+      .get(repository.id) as { durable_cluster_updated_at: string | null };
+    const durableMembershipState = this.db
+      .prepare(
+        `select max(cm.updated_at) as durable_membership_updated_at
+         from cluster_memberships cm
+         join cluster_groups cg on cg.id = cm.cluster_id
+         where cg.repo_id = ?`,
+      )
+      .get(repository.id) as { durable_membership_updated_at: string | null };
+    const latestSync = this.db
+      .prepare("select id from sync_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
+      .get(repository.id) as { id: number } | undefined;
+    const latestEmbedding = this.db
+      .prepare("select id from embedding_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
+      .get(repository.id) as { id: number } | undefined;
+    const latestClusterRun = this.getLatestClusterRun(repository.id);
+
+    return {
+      repositoryUpdatedAt: repository.updatedAt,
+      threadUpdatedAt: threadState.thread_updated_at,
+      threadClosedAt: threadState.thread_closed_at,
+      clusterClosedAt: clusterState.cluster_closed_at,
+      durableClusterUpdatedAt: durableClusterState.durable_cluster_updated_at,
+      durableMembershipUpdatedAt: durableMembershipState.durable_membership_updated_at,
+      latestSyncRunId: latestSync?.id ?? null,
+      latestEmbeddingRunId: latestEmbedding?.id ?? null,
+      latestClusterRunId: latestClusterRun?.id ?? null,
     };
   }
 

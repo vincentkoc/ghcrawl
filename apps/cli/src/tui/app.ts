@@ -7,6 +7,7 @@ import type {
   TuiClusterDetail,
   TuiClusterSummary,
   TuiClusterSortMode,
+  TuiRefreshState,
   TuiSnapshot,
   TuiThreadDetail,
   TuiWideLayoutPreference,
@@ -126,6 +127,7 @@ const CLUSTER_NAME_START = CLUSTER_COUNT_WIDTH + CLUSTER_COLUMN_GAP;
 const CLUSTER_TITLE_START = CLUSTER_NAME_START + CLUSTER_NAME_WIDTH + CLUSTER_COLUMN_GAP;
 const CLUSTER_MIX_START = CLUSTER_TITLE_START + CLUSTER_TITLE_WIDTH + CLUSTER_COLUMN_GAP;
 const CLUSTER_UPDATED_START = CLUSTER_MIX_START + CLUSTER_MIX_WIDTH + CLUSTER_COLUMN_GAP;
+const TUI_AUTO_REFRESH_INTERVAL_MS = 15_000;
 
 export async function startTui(params: StartTuiParams): Promise<void> {
   const selectedRepository = params.owner && params.repo ? { owner: params.owner, repo: params.repo } : null;
@@ -166,6 +168,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   let dismissModal: (() => void) | null = null;
   let suppressNextClusterSelect = false;
   let suppressNextMemberSelect = false;
+  let lastRefreshState: TuiRefreshState | null = null;
 
   const clearCaches = (): void => {
     clusterDetailCache.clear();
@@ -310,6 +313,10 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       search,
       includeClosedClusters: showClosed,
     });
+    lastRefreshState = params.service.getTuiRefreshState({
+      owner: currentRepository.owner,
+      repo: currentRepository.repo,
+    });
     selectedClusterId = preserveSelectedId(snapshot.clusters.map((cluster) => cluster.clusterId), previousClusterId);
     rebuildClusterItems();
 
@@ -349,6 +356,28 @@ export async function startTui(params: StartTuiParams): Promise<void> {
 
     status = `Loaded ${snapshot.clusters.length} cluster(s)`;
     render();
+  };
+
+  const autoRefreshIfChanged = (): void => {
+    if (!currentRepository.owner || !currentRepository.repo || modalOpen || isRendering) {
+      return;
+    }
+    try {
+      const nextState = params.service.getTuiRefreshState({
+        owner: currentRepository.owner,
+        repo: currentRepository.repo,
+      });
+      if (lastRefreshState && formatTuiRefreshStateKey(nextState) !== formatTuiRefreshStateKey(lastRefreshState)) {
+        refreshAll(true);
+        status = 'External DB update detected; refreshed';
+        render();
+        return;
+      }
+      lastRefreshState = nextState;
+    } catch (error) {
+      status = `Auto-refresh failed: ${formatTuiError(error)}`;
+      render();
+    }
   };
 
   const updateFocus = (nextFocus: TuiFocusPane): void => {
@@ -1461,7 +1490,11 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   });
   widgets.screen.on('resize', () => render());
 
+  const autoRefreshTimer = setInterval(autoRefreshIfChanged, TUI_AUTO_REFRESH_INTERVAL_MS);
+  autoRefreshTimer.unref?.();
+
   widgets.screen.on('destroy', () => {
+    clearInterval(autoRefreshTimer);
     widgets.screen.program.showCursor();
   });
 
@@ -1641,6 +1674,20 @@ export function renderDetailPane(
 
 export function escapeBlessedText(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}');
+}
+
+function formatTuiRefreshStateKey(state: TuiRefreshState): string {
+  return [
+    state.repositoryUpdatedAt ?? '',
+    state.threadUpdatedAt ?? '',
+    state.threadClosedAt ?? '',
+    state.clusterClosedAt ?? '',
+    state.durableClusterUpdatedAt ?? '',
+    state.durableMembershipUpdatedAt ?? '',
+    state.latestSyncRunId ?? '',
+    state.latestEmbeddingRunId ?? '',
+    state.latestClusterRunId ?? '',
+  ].join('|');
 }
 
 export function splitClusterDisplayTitle(displayTitle: string): { name: string; title: string } {

@@ -14,6 +14,7 @@ import {
   authorThreadsResponseSchema,
   closeResponseSchema,
   clusterOverrideResponseSchema,
+  clusterMergeResponseSchema,
   clusterDetailResponseSchema,
   clusterResultSchema,
   clusterSummariesResponseSchema,
@@ -31,6 +32,7 @@ import {
   type ActionResponse,
   type AuthorThreadsResponse,
   type CloseResponse,
+  type ClusterMergeResponse,
   type ClusterOverrideResponse,
   type ClusterDetailResponse,
   type ClusterDto,
@@ -42,6 +44,7 @@ import {
   type EmbedResultDto,
   type HealthResponse,
   type IncludeClusterMemberRequest,
+  type MergeClustersRequest,
   type NeighborsResponse,
   type RefreshResponse,
   type RepositoriesResponse,
@@ -1149,6 +1152,122 @@ export class GHCrawlService {
       action: 'force_canonical',
       state: 'active',
       message: `Set ${thread.kind} #${thread.number} as canonical for durable cluster ${cluster.id}.`,
+    });
+  }
+
+  mergeDurableClusters(params: MergeClustersRequest): ClusterMergeResponse {
+    if (params.sourceClusterId === params.targetClusterId) {
+      throw new Error('Source and target cluster ids must differ.');
+    }
+    const repository = this.requireRepository(params.owner, params.repo);
+    const clusters = this.db
+      .prepare(
+        `select id, stable_slug
+         from cluster_groups
+         where repo_id = ?
+           and id in (?, ?)`,
+      )
+      .all(repository.id, params.sourceClusterId, params.targetClusterId) as Array<{ id: number; stable_slug: string }>;
+    const source = clusters.find((cluster) => cluster.id === params.sourceClusterId);
+    const target = clusters.find((cluster) => cluster.id === params.targetClusterId);
+    if (!source) {
+      throw new Error(`Durable source cluster ${params.sourceClusterId} was not found for ${repository.fullName}.`);
+    }
+    if (!target) {
+      throw new Error(`Durable target cluster ${params.targetClusterId} was not found for ${repository.fullName}.`);
+    }
+
+    const timestamp = nowIso();
+    const members = this.db
+      .prepare(
+        `select thread_id, score_to_representative
+         from cluster_memberships
+         where cluster_id = ?
+           and state = 'active'`,
+      )
+      .all(source.id) as Array<{ thread_id: number; score_to_representative: number | null }>;
+    const sourceAliases = this.db
+      .prepare('select alias_slug, reason from cluster_aliases where cluster_id = ?')
+      .all(source.id) as Array<{ alias_slug: string; reason: string }>;
+
+    this.db.transaction(() => {
+      const upsertAlias = this.db.prepare(
+        `insert into cluster_aliases (cluster_id, alias_slug, reason, created_at)
+         values (?, ?, ?, ?)
+         on conflict(cluster_id, alias_slug) do update set
+           reason = excluded.reason`,
+      );
+      upsertAlias.run(target.id, source.stable_slug, `merged_from:${source.id}`, timestamp);
+      for (const alias of sourceAliases) {
+        upsertAlias.run(target.id, alias.alias_slug, alias.reason, timestamp);
+      }
+
+      for (const member of members) {
+        this.db
+          .prepare("delete from cluster_overrides where cluster_id = ? and thread_id = ? and action = 'exclude'")
+          .run(target.id, member.thread_id);
+        this.db
+          .prepare(
+            `insert into cluster_overrides (repo_id, cluster_id, thread_id, action, reason, created_at, expires_at)
+             values (?, ?, ?, 'force_include', ?, ?, null)
+             on conflict(cluster_id, thread_id, action) do update set
+               reason = excluded.reason,
+               created_at = excluded.created_at,
+               expires_at = null`,
+          )
+          .run(repository.id, target.id, member.thread_id, params.reason ?? `merged from cluster ${source.id}`, timestamp);
+        upsertClusterMembership(this.db, {
+          clusterId: target.id,
+          threadId: member.thread_id,
+          role: 'related',
+          state: 'active',
+          scoreToRepresentative: member.score_to_representative,
+          addedBy: 'user',
+          addedReason: {
+            source: 'mergeDurableClusters',
+            sourceClusterId: source.id,
+            reason: params.reason ?? null,
+          },
+        });
+        this.db
+          .prepare("update cluster_memberships set added_by = 'user', updated_at = ? where cluster_id = ? and thread_id = ?")
+          .run(timestamp, target.id, member.thread_id);
+      }
+
+      this.db
+        .prepare("update cluster_groups set status = 'merged', closed_at = ?, updated_at = ? where id = ?")
+        .run(timestamp, timestamp, source.id);
+      this.db
+        .prepare("update cluster_groups set updated_at = ? where id = ?")
+        .run(timestamp, target.id);
+      recordClusterEvent(this.db, {
+        clusterId: source.id,
+        eventType: 'manual_merge_source',
+        actorKind: 'user',
+        payload: {
+          targetClusterId: target.id,
+          reason: params.reason ?? null,
+        },
+      });
+      recordClusterEvent(this.db, {
+        clusterId: target.id,
+        eventType: 'manual_merge_target',
+        actorKind: 'user',
+        payload: {
+          sourceClusterId: source.id,
+          sourceSlug: source.stable_slug,
+          movedMemberCount: members.length,
+          reason: params.reason ?? null,
+        },
+      });
+    })();
+
+    return clusterMergeResponseSchema.parse({
+      ok: true,
+      repository,
+      sourceClusterId: source.id,
+      targetClusterId: target.id,
+      message: `Merged durable cluster ${source.id} into ${target.id}.`,
     });
   }
 

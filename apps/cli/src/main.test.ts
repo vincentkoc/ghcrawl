@@ -272,6 +272,9 @@ test('agent-facing command help advertises explicit --json', async () => {
     'close-thread',
     'close-cluster',
     'exclude-cluster-member',
+    'include-cluster-member',
+    'set-cluster-canonical',
+    'merge-clusters',
     'embed',
     'key-summaries',
     'cluster',
@@ -428,6 +431,42 @@ test('include-cluster-member command forwards durable override inputs', async ()
     reason: 'same root cause',
   });
   assert.match(stdout.read(), /"action": "force_include"/);
+});
+
+test('merge-clusters command forwards durable merge inputs', async () => {
+  const stdout = createWritableCapture();
+  const context = makeRunContext();
+  const original = GHCrawlService.prototype.mergeDurableClusters;
+  let received: unknown;
+
+  GHCrawlService.prototype.mergeDurableClusters = function mergeDurableClustersStub(params: unknown) {
+    received = params;
+    return {
+      ok: true,
+      sourceClusterId: 7,
+      targetClusterId: 8,
+      message: 'merged',
+    } as never;
+  };
+
+  try {
+    await run(['merge-clusters', 'openclaw/openclaw', '--source', '7', '--target', '8', '--reason', 'same root cause'], stdout.stream, {
+      env: context.env,
+      cwd: context.cwd,
+    });
+  } finally {
+    GHCrawlService.prototype.mergeDurableClusters = original;
+    context.cleanup();
+  }
+
+  assert.deepEqual(received, {
+    owner: 'openclaw',
+    repo: 'openclaw',
+    sourceClusterId: 7,
+    targetClusterId: 8,
+    reason: 'same root cause',
+  });
+  assert.match(stdout.read(), /"targetClusterId": 8/);
 });
 
 test('durable-clusters command forwards stable cluster list options', async () => {

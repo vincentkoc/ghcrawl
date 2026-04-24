@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 
 import {
   actionRequestSchema,
+  clusterMergeResponseSchema,
   clusterOverrideResponseSchema,
   durableClustersResponseSchema,
   excludeClusterMemberRequestSchema,
   healthResponseSchema,
   includeClusterMemberRequestSchema,
+  mergeClustersRequestSchema,
   neighborsResponseSchema,
   searchResponseSchema,
   setClusterCanonicalRequestSchema,
@@ -92,6 +94,18 @@ test('include cluster member request trims optional reason', () => {
   assert.equal(parsed.reason, 'same root cause');
 });
 
+test('merge clusters request trims optional reason', () => {
+  const parsed = mergeClustersRequestSchema.parse({
+    owner: 'openclaw',
+    repo: 'openclaw',
+    sourceClusterId: 7,
+    targetClusterId: 8,
+    reason: '  same root cause  ',
+  });
+
+  assert.equal(parsed.reason, 'same root cause');
+});
+
 test('cluster override response accepts durable removal state', () => {
   const parsed = clusterOverrideResponseSchema.parse({
     ok: true,
@@ -166,6 +180,25 @@ test('cluster override response accepts force canonical action', () => {
   });
 
   assert.equal(parsed.action, 'force_canonical');
+});
+
+test('cluster merge response accepts source and target ids', () => {
+  const parsed = clusterMergeResponseSchema.parse({
+    ok: true,
+    repository: {
+      id: 1,
+      owner: 'openclaw',
+      name: 'openclaw',
+      fullName: 'openclaw/openclaw',
+      githubRepoId: null,
+      updatedAt: new Date().toISOString(),
+    },
+    sourceClusterId: 7,
+    targetClusterId: 8,
+    message: 'merged',
+  });
+
+  assert.equal(parsed.targetClusterId, 8);
 });
 
 test('durable clusters response accepts stable slugs and governed member states', () => {

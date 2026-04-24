@@ -24,6 +24,7 @@ type CommandName =
   | 'exclude-cluster-member'
   | 'include-cluster-member'
   | 'set-cluster-canonical'
+  | 'merge-clusters'
   | 'summarize'
   | 'key-summaries'
   | 'purge-comments'
@@ -235,6 +236,19 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
       '--json  Emit machine-readable JSON output explicitly',
     ],
     examples: ['ghcrawl set-cluster-canonical openclaw/openclaw --id 123 --number 42 --reason "best root issue" --json'],
+    agentJson: true,
+  },
+  {
+    name: 'merge-clusters',
+    synopsis: 'merge-clusters <owner/repo> --source <cluster-id> --target <cluster-id> [--reason <text>] [--json]',
+    description: 'Merge one durable cluster into another and preserve the source slug as an alias.',
+    options: [
+      '--source <cluster-id>  Durable cluster id to merge from',
+      '--target <cluster-id>  Durable cluster id to merge into',
+      '--reason <text>  Optional maintainer reason',
+      '--json  Emit machine-readable JSON output explicitly',
+    ],
+    examples: ['ghcrawl merge-clusters openclaw/openclaw --source 123 --target 456 --reason "same root cause" --json'],
     agentJson: true,
   },
   {
@@ -542,6 +556,8 @@ export function parseRepoFlags(command: CommandName, args: string[]): ParsedRepo
       threshold: { type: 'string' },
       port: { type: 'string' },
       id: { type: 'string' },
+      source: { type: 'string' },
+      target: { type: 'string' },
       reason: { type: 'string' },
       sort: { type: 'string' },
       search: { type: 'string' },
@@ -1134,6 +1150,24 @@ export async function run(
           repo,
           clusterId: parsePositiveInteger('id', values.id, 'set-cluster-canonical'),
           threadNumber: parsePositiveInteger('number', values.number, 'set-cluster-canonical'),
+          reason: typeof values.reason === 'string' ? values.reason : undefined,
+        });
+        writeJson(stdout, result);
+        return;
+      }
+      case 'merge-clusters': {
+        const { owner, repo, values } = parseRepoFlags('merge-clusters', rest);
+        if (typeof values.source !== 'string') {
+          throw new CliUsageError('Missing --source', 'merge-clusters');
+        }
+        if (typeof values.target !== 'string') {
+          throw new CliUsageError('Missing --target', 'merge-clusters');
+        }
+        const result = getService().mergeDurableClusters({
+          owner,
+          repo,
+          sourceClusterId: parsePositiveInteger('source', values.source, 'merge-clusters'),
+          targetClusterId: parsePositiveInteger('target', values.target, 'merge-clusters'),
           reason: typeof values.reason === 'string' ? values.reason : undefined,
         });
         writeJson(stdout, result);

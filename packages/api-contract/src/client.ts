@@ -6,12 +6,14 @@ import {
   closeThreadRequestSchema,
   authorThreadsResponseSchema,
   clusterDetailResponseSchema,
+  clusterMergeResponseSchema,
   clusterOverrideResponseSchema,
   clusterSummariesResponseSchema,
   clustersResponseSchema,
   excludeClusterMemberRequestSchema,
   healthResponseSchema,
   includeClusterMemberRequestSchema,
+  mergeClustersRequestSchema,
   refreshRequestSchema,
   refreshResponseSchema,
   repositoriesResponseSchema,
@@ -21,6 +23,7 @@ import {
   type ActionRequest,
   type ActionResponse,
   type CloseResponse,
+  type ClusterMergeResponse,
   type ClusterOverrideResponse,
   type AuthorThreadsResponse,
   type ClusterDetailResponse,
@@ -66,6 +69,7 @@ export type GitcrawlClient = {
   excludeClusterMember: (request: { owner: string; repo: string; clusterId: number; threadNumber: number; reason?: string }) => Promise<ClusterOverrideResponse>;
   includeClusterMember: (request: { owner: string; repo: string; clusterId: number; threadNumber: number; reason?: string }) => Promise<ClusterOverrideResponse>;
   setClusterCanonical: (request: { owner: string; repo: string; clusterId: number; threadNumber: number; reason?: string }) => Promise<ClusterOverrideResponse>;
+  mergeClusters: (request: { owner: string; repo: string; sourceClusterId: number; targetClusterId: number; reason?: string }) => Promise<ClusterMergeResponse>;
 };
 
 type FetchLike = typeof fetch;
@@ -205,6 +209,15 @@ export function createGitcrawlClient(baseUrl: string, fetchImpl: FetchLike = fet
         body: JSON.stringify(body),
       });
       return readJson(res, clusterOverrideResponseSchema);
+    },
+    async mergeClusters(request) {
+      const body = mergeClustersRequestSchema.parse(request);
+      const res = await fetchImpl(`${normalized}/actions/merge-clusters`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return readJson(res, clusterMergeResponseSchema);
     },
   };
 }

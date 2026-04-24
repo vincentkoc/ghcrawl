@@ -2397,6 +2397,89 @@ test('clusterRepository preserves a forced include on rebuild', async () => {
   }
 });
 
+test('mergeDurableClusters preserves source slug and force-includes active source members', () => {
+  const service = new GHCrawlService({
+    config: makeTestConfig(),
+    github: {
+      checkAuth: async () => undefined,
+      getRepo: async () => ({ id: 1, full_name: 'openclaw/openclaw' }),
+      listRepositoryIssues: async () => [],
+      getIssue: async () => {
+        throw new Error('not expected');
+      },
+      getPull: async () => {
+        throw new Error('not expected');
+      },
+      listIssueComments: async () => [],
+      listPullReviews: async () => [],
+      listPullReviewComments: async () => [],
+      listPullFiles: async () => [],
+    },
+  });
+
+  try {
+    const now = '2026-03-09T00:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+    const insertThread = service.db.prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertThread.run(10, 1, '100', 42, 'issue', 'open', 'Root issue', 'body', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, now, null, null, now, now, now);
+    insertThread.run(11, 1, '101', 43, 'issue', 'open', 'Related issue', 'body', 'bob', 'User', 'https://github.com/openclaw/openclaw/issues/43', '[]', '[]', '{}', 'hash-43', 0, now, now, null, null, now, now, now);
+    const insertCluster = service.db.prepare(
+      `insert into cluster_groups (
+        id, repo_id, stable_key, stable_slug, status, cluster_type, representative_thread_id, title, created_at, updated_at
+      ) values (?, ?, ?, ?, 'active', 'duplicate_candidate', ?, ?, ?, ?)`,
+    );
+    insertCluster.run(7, 1, 'source-key', 'source-slug', 11, 'Source cluster', now, now);
+    insertCluster.run(8, 1, 'target-key', 'target-slug', 10, 'Target cluster', now, now);
+    service.db
+      .prepare(
+        `insert into cluster_memberships (
+          cluster_id, thread_id, role, state, score_to_representative, first_seen_run_id, last_seen_run_id,
+          added_by, removed_by, added_reason_json, removed_reason_json, created_at, updated_at, removed_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(7, 11, 'canonical', 'active', 1, null, null, 'algo', null, '{}', '{}', now, now, null);
+
+    const result = service.mergeDurableClusters({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      sourceClusterId: 7,
+      targetClusterId: 8,
+      reason: 'same root cause',
+    });
+
+    const source = service.db.prepare('select status from cluster_groups where id = ?').get(7) as { status: string };
+    const alias = service.db.prepare('select reason from cluster_aliases where cluster_id = ? and alias_slug = ?').get(8, 'source-slug') as {
+      reason: string;
+    };
+    const override = service.db.prepare('select action, reason from cluster_overrides where cluster_id = ? and thread_id = ?').get(8, 11) as {
+      action: string;
+      reason: string;
+    };
+    const membership = service.db
+      .prepare('select state, added_by from cluster_memberships where cluster_id = ? and thread_id = ?')
+      .get(8, 11) as { state: string; added_by: string };
+
+    assert.equal(result.targetClusterId, 8);
+    assert.equal(source.status, 'merged');
+    assert.equal(alias.reason, 'merged_from:7');
+    assert.deepEqual(override, { action: 'force_include', reason: 'same root cause' });
+    assert.deepEqual(membership, { state: 'active', added_by: 'user' });
+  } finally {
+    service.close();
+  }
+});
+
 test('clusterRepository materializes only changed deterministic fingerprints', async () => {
   const service = new GHCrawlService({
     config: makeTestConfig(),

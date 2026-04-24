@@ -6,6 +6,7 @@ import {
   closeThreadRequestSchema,
   excludeClusterMemberRequestSchema,
   includeClusterMemberRequestSchema,
+  mergeClustersRequestSchema,
   refreshRequestSchema,
   setClusterCanonicalRequestSchema,
 } from '@ghcrawl/api-contract';
@@ -230,6 +231,12 @@ export function createApiServer(service: GHCrawlService): http.Server {
       if (req.method === 'POST' && url.pathname === '/actions/set-cluster-canonical') {
         const body = setClusterCanonicalRequestSchema.parse(await readBody(req));
         sendJson(res, 200, service.setClusterCanonicalThread(body));
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/actions/merge-clusters') {
+        const body = mergeClustersRequestSchema.parse(await readBody(req));
+        sendJson(res, 200, service.mergeDurableClusters(body));
         return;
       }
 

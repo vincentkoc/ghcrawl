@@ -305,6 +305,15 @@ export const setClusterCanonicalRequestSchema = z.object({
 });
 export type SetClusterCanonicalRequest = z.infer<typeof setClusterCanonicalRequestSchema>;
 
+export const mergeClustersRequestSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  sourceClusterId: z.number().int().positive(),
+  targetClusterId: z.number().int().positive(),
+  reason: z.string().trim().min(1).optional(),
+});
+export type MergeClustersRequest = z.infer<typeof mergeClustersRequestSchema>;
+
 export const closeResponseSchema = z.object({
   ok: z.boolean(),
   repository: repositorySchema,
@@ -325,6 +334,15 @@ export const clusterOverrideResponseSchema = z.object({
   message: z.string(),
 });
 export type ClusterOverrideResponse = z.infer<typeof clusterOverrideResponseSchema>;
+
+export const clusterMergeResponseSchema = z.object({
+  ok: z.boolean(),
+  repository: repositorySchema,
+  sourceClusterId: z.number().int().positive(),
+  targetClusterId: z.number().int().positive(),
+  message: z.string(),
+});
+export type ClusterMergeResponse = z.infer<typeof clusterMergeResponseSchema>;
 
 export const rerunActionSchema = z.enum(['summarize', 'embed', 'cluster']);
 export type RerunAction = z.infer<typeof rerunActionSchema>;

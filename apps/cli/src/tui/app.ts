@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import blessed from 'neo-blessed';
 
 import type {
+  EmbeddingBasis,
   GHCrawlService,
   TuiClusterDetail,
   TuiClusterSortMode,
@@ -1379,14 +1380,19 @@ export function buildUpdatePipelineLabels(
   });
 }
 
-export function buildUpdatePipelineHelpContent(embeddingBasis: 'title_original' | 'title_summary'): string {
-  const summariesEnabled = embeddingBasis === 'title_summary';
-  const summaryStatus = summariesEnabled
-    ? 'LLM summaries: enabled via title_summary.'
-    : 'LLM summaries: disabled; current basis is title_original.';
-  const summaryAction = summariesEnabled
-    ? 'On openclaw/openclaw this improved non-solo cluster membership by about 50% versus title_original.'
-    : 'Enable with `ghcrawl configure --embedding-basis title_summary` if you want richer clustering; on openclaw/openclaw that improved non-solo cluster membership by about 50%.';
+export function buildUpdatePipelineHelpContent(embeddingBasis: EmbeddingBasis): string {
+  const summaryStatus =
+    embeddingBasis === 'title_summary'
+      ? 'LLM summaries: enabled via title_summary.'
+      : embeddingBasis === 'llm_key_summary'
+        ? '3-line key summaries: active embedding basis.'
+        : 'LLM summaries: disabled; current basis is title_original.';
+  const summaryAction =
+    embeddingBasis === 'title_summary'
+      ? 'On openclaw/openclaw this improved non-solo cluster membership by about 50% versus title_original.'
+      : embeddingBasis === 'llm_key_summary'
+        ? 'Run `ghcrawl key-summaries` before embedding so the active vectors have deterministic key text.'
+        : 'Enable with `ghcrawl configure --embedding-basis title_summary` if you want richer clustering; on openclaw/openclaw that improved non-solo cluster membership by about 50%.';
   return [
     'Usually you want all three. Run order is fixed: GitHub sync/reconcile -> embeddings -> clusters.',
     `${summaryStatus} ${summaryAction}`,
@@ -1522,7 +1528,7 @@ async function promptHelp(screen: blessed.Widgets.Screen): Promise<void> {
 async function promptUpdatePipelineSelection(
   screen: blessed.Widgets.Screen,
   stats: TuiRepoStats | null,
-  embeddingBasis: 'title_original' | 'title_summary',
+  embeddingBasis: EmbeddingBasis,
 ): Promise<UpdateTaskSelection | null> {
   const selection: UpdateTaskSelection = { sync: true, embed: true, cluster: true };
   const modalWidth = '76%';

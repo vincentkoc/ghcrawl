@@ -60,7 +60,7 @@ type ConfigureReport = {
   configPath: string;
   updated: boolean;
   summaryModel: 'gpt-5-mini' | 'gpt-5.4-mini';
-  embeddingBasis: 'title_original' | 'title_summary';
+  embeddingBasis: 'title_original' | 'title_summary' | 'llm_key_summary';
   vectorBackend: 'vectorlite';
   costEstimateUsd: {
     sampleThreads: number;
@@ -107,11 +107,11 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
   },
   {
     name: 'configure',
-    synopsis: 'configure [--summary-model gpt-5-mini|gpt-5.4-mini] [--embedding-basis title_original|title_summary] [--json]',
+    synopsis: 'configure [--summary-model gpt-5-mini|gpt-5.4-mini] [--embedding-basis title_original|title_summary|llm_key_summary] [--json]',
     description: 'Show or update persisted summarization and embedding settings.',
     options: [
       '--summary-model <model>  Select gpt-5-mini or gpt-5.4-mini for summarization',
-      '--embedding-basis <basis>  Select title_original or title_summary for active vectors',
+      '--embedding-basis <basis>  Select title_original, title_summary, or llm_key_summary for active vectors',
       '--json  Emit machine-readable JSON output explicitly',
     ],
     examples: ['ghcrawl configure', 'ghcrawl configure --summary-model gpt-5.4-mini', 'ghcrawl configure --embedding-basis title_original --json'],
@@ -661,7 +661,7 @@ function buildConfigureReport(options: {
   configPath: string;
   updated: boolean;
   summaryModel: 'gpt-5-mini' | 'gpt-5.4-mini';
-  embeddingBasis: 'title_original' | 'title_summary';
+  embeddingBasis: 'title_original' | 'title_summary' | 'llm_key_summary';
   vectorBackend: 'vectorlite';
 }): ConfigureReport {
   return {
@@ -720,12 +720,18 @@ export function formatDoctorReport(result: DoctorReport): string {
 }
 
 export function formatConfigureReport(result: ConfigureReport): string {
-  const basisLabel = result.embeddingBasis === 'title_summary'
-    ? 'title + dedupe summary'
-    : 'title + original body';
-  const summaryModeNote = result.embeddingBasis === 'title_summary'
-    ? 'enabled automatically during refresh'
-    : 'disabled by default; enable title_summary to summarize before embedding';
+  const basisLabel =
+    result.embeddingBasis === 'title_summary'
+      ? 'title + dedupe summary'
+      : result.embeddingBasis === 'llm_key_summary'
+        ? 'title + 3-line LLM key summary'
+        : 'title + original body';
+  const summaryModeNote =
+    result.embeddingBasis === 'title_summary'
+      ? 'enabled automatically during refresh'
+      : result.embeddingBasis === 'llm_key_summary'
+        ? 'requires key-summaries before embedding'
+        : 'disabled by default; enable title_summary or llm_key_summary before embedding';
   const lines = [
     'ghcrawl configure',
     `config path: ${result.configPath}`,
@@ -927,7 +933,7 @@ export async function run(
         });
         const values = parsed.values as RepoCommandValues;
         const summaryModel = parseEnum('configure', 'summary-model', values['summary-model'], ['gpt-5-mini', 'gpt-5.4-mini']);
-        const embeddingBasis = parseEnum('configure', 'embedding-basis', values['embedding-basis'], ['title_original', 'title_summary']);
+        const embeddingBasis = parseEnum('configure', 'embedding-basis', values['embedding-basis'], ['title_original', 'title_summary', 'llm_key_summary']);
         const current = getConfig();
         const stored = readPersistedConfig(loadConfigOptions);
         const next = {
@@ -947,7 +953,7 @@ export async function run(
           configPath: current.configPath,
           updated,
           summaryModel: next.summaryModel as 'gpt-5-mini' | 'gpt-5.4-mini',
-          embeddingBasis: next.embeddingBasis as 'title_original' | 'title_summary',
+          embeddingBasis: next.embeddingBasis as 'title_original' | 'title_summary' | 'llm_key_summary',
           vectorBackend: 'vectorlite',
         });
         const shouldWriteJson = values.json === true || (stdout as NodeJS.WriteStream).isTTY !== true;

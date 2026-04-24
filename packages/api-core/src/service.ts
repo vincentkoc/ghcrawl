@@ -127,7 +127,7 @@ type CommentSeed = {
   updatedAtGh: string | null;
 };
 
-type EmbeddingSourceKind = 'title' | 'body' | 'dedupe_summary';
+type EmbeddingSourceKind = 'title' | 'body' | 'dedupe_summary' | 'llm_key_summary';
 type SimilaritySourceKind = EmbeddingSourceKind | 'deterministic_fingerprint';
 
 type EmbeddingTask = {
@@ -1541,6 +1541,7 @@ export class GHCrawlService {
 
       if (this.isRepoVectorStateCurrent(repository.id)) {
         const vectorItems = this.loadClusterableActiveVectorMeta(repository.id, repository.fullName);
+        const activeSourceKind = this.activeVectorSourceKind();
         const activeIds = new Set(vectorItems.map((item) => item.id));
         const annQuery = this.getVectorliteClusterQuery(vectorItems.length, k);
         aggregatedEdges = new Map();
@@ -1570,7 +1571,7 @@ export class GHCrawlService {
                 leftThreadId: Math.min(item.id, neighbor.threadId),
                 rightThreadId: Math.max(item.id, neighbor.threadId),
                 score: neighbor.score,
-                sourceKinds: new Set(['dedupe_summary']),
+                sourceKinds: new Set([activeSourceKind]),
               });
             }
           }
@@ -1666,7 +1667,7 @@ export class GHCrawlService {
     const repository = this.requireRepository(params.owner, params.repo);
     const loaded = this.loadClusterableThreadMeta(repository.id);
     const activeVectors = this.isRepoVectorStateCurrent(repository.id) ? this.loadNormalizedActiveVectors(repository.id) : [];
-    const activeSourceKind: EmbeddingSourceKind = this.config.embeddingBasis === 'title_summary' ? 'dedupe_summary' : 'body';
+    const activeSourceKind = this.activeVectorSourceKind();
     const useActiveVectors = activeVectors.length > 0 && (params.sourceKinds === undefined || loaded.items.length === 0);
     const sourceKinds = useActiveVectors ? [activeSourceKind] : (params.sourceKinds ?? loaded.sourceKinds);
     const items = useActiveVectors
@@ -1878,7 +1879,7 @@ export class GHCrawlService {
       }
 
       // Finalize edge scores using the configured aggregation method
-      const defaultWeights: Record<EmbeddingSourceKind, number> = { dedupe_summary: 0.5, title: 0.3, body: 0.2 };
+      const defaultWeights: Record<EmbeddingSourceKind, number> = { dedupe_summary: 0.5, llm_key_summary: 0.5, title: 0.3, body: 0.2 };
       const weights = { ...defaultWeights, ...(params.aggregationWeights ?? {}) };
       const aggregated = this.finalizeEdgeScores(perSourceScores, aggregation, weights, minScore);
 
@@ -3953,6 +3954,7 @@ export class GHCrawlService {
     title: string;
     body: string | null;
     dedupeSummary: string | null;
+    keySummary: string | null;
   }): ActiveVectorTask | null {
     const sections = [`title: ${normalizeSummaryText(params.title)}`];
     if (this.config.embeddingBasis === 'title_summary') {
@@ -3961,6 +3963,12 @@ export class GHCrawlService {
         return null;
       }
       sections.push(`summary: ${summary}`);
+    } else if (this.config.embeddingBasis === 'llm_key_summary') {
+      const keySummary = normalizeSummaryText(params.keySummary ?? '');
+      if (!keySummary) {
+        return null;
+      }
+      sections.push(`key_summary:\n${keySummary}`);
     } else {
       const body = normalizeSummaryText(params.body ?? '');
       if (body) {
@@ -3984,6 +3992,16 @@ export class GHCrawlService {
       estimatedTokens: prepared.estimatedTokens,
       wasTruncated: prepared.wasTruncated,
     };
+  }
+
+  private activeVectorSourceKind(): EmbeddingSourceKind {
+    if (this.config.embeddingBasis === 'title_summary') {
+      return 'dedupe_summary';
+    }
+    if (this.config.embeddingBasis === 'llm_key_summary') {
+      return 'llm_key_summary';
+    }
+    return 'body';
   }
 
   private prepareEmbeddingText(
@@ -4579,6 +4597,7 @@ export class GHCrawlService {
       body: string | null;
     }>;
     const summaryTexts = this.loadDedupeSummaryTextMap(repoId, threadNumber);
+    const keySummaryTexts = this.loadKeySummaryTextMap(repoId, threadNumber);
     const missingSummaryThreadNumbers: number[] = [];
     const tasks = rows.flatMap((row) => {
       const task = this.buildActiveVectorTask({
@@ -4587,11 +4606,12 @@ export class GHCrawlService {
         title: row.title,
         body: row.body,
         dedupeSummary: summaryTexts.get(row.id) ?? null,
+        keySummary: keySummaryTexts.get(row.id) ?? null,
       });
       if (task) {
         return [task];
       }
-      if (this.config.embeddingBasis === 'title_summary') {
+      if (this.config.embeddingBasis === 'title_summary' || this.config.embeddingBasis === 'llm_key_summary') {
         missingSummaryThreadNumbers.push(row.number);
       }
       return [];
@@ -4646,6 +4666,39 @@ export class GHCrawlService {
     const combined = new Map<number, string>();
     for (const row of rows) {
       const text = normalizeSummaryText(row.summary_text);
+      if (text) {
+        combined.set(row.thread_id, text);
+      }
+    }
+    return combined;
+  }
+
+  private loadKeySummaryTextMap(repoId: number, threadNumber?: number): Map<number, string> {
+    let sql =
+      `select tr.thread_id, ks.key_text
+       from thread_key_summaries ks
+       join thread_revisions tr on tr.id = ks.thread_revision_id
+       join threads t on t.id = tr.thread_id
+       where t.repo_id = ?
+         and t.state = 'open'
+         and t.closed_at_local is null
+         and ks.summary_kind = 'llm_key_3line'
+         and ks.prompt_version = ?
+         and ks.model = ?`;
+    const args: Array<number | string> = [repoId, LLM_KEY_SUMMARY_PROMPT_VERSION, this.config.summaryModel];
+    if (threadNumber) {
+      sql += ' and t.number = ?';
+      args.push(threadNumber);
+    }
+    sql += ' order by tr.id asc';
+
+    const rows = this.db.prepare(sql).all(...args) as Array<{
+      thread_id: number;
+      key_text: string;
+    }>;
+    const combined = new Map<number, string>();
+    for (const row of rows) {
+      const text = normalizeSummaryText(row.key_text);
       if (text) {
         combined.set(row.thread_id, text);
       }

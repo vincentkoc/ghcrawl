@@ -1061,6 +1061,85 @@ test('embedRepository batches multi-source embeddings and skips unchanged inputs
   }
 });
 
+test('embedRepository can use stored 3-line key summaries as active vector input', async () => {
+  let embeddedText = '';
+  const service = new GHCrawlService({
+    config: makeTestConfig({ embeddingBasis: 'llm_key_summary' }),
+    github: {
+      checkAuth: async () => undefined,
+      getRepo: async () => ({}),
+      listRepositoryIssues: async () => [],
+      getIssue: async () => ({}),
+      getPull: async () => ({}),
+      listIssueComments: async () => [],
+      listPullReviews: async () => [],
+      listPullReviewComments: async () => [],
+      listPullFiles: async () => [],
+    },
+    ai: {
+      checkAuth: async () => undefined,
+      summarizeThread: async () => {
+        throw new Error('not expected');
+      },
+      embedTexts: async ({ texts }) => {
+        embeddedText = texts[0] ?? '';
+        return texts.map((_text, index) => makeEmbedding(1, index));
+      },
+    },
+  });
+
+  try {
+    const now = '2026-03-09T00:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+    service.db
+      .prepare(
+        `insert into threads (
+          id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+          labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+          merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(10, 1, '100', 42, 'issue', 'open', 'Downloader hangs', 'The transfer never finishes.', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, now, null, null, now, now, now);
+    service.db
+      .prepare(
+        `insert into thread_revisions (id, thread_id, source_updated_at, content_hash, title_hash, body_hash, labels_hash, raw_json_blob_id, created_at)
+         values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(100, 10, now, 'content-hash', 'title-hash', 'body-hash', 'labels-hash', null, now);
+    service.db
+      .prepare(
+        `insert into thread_key_summaries (
+          thread_revision_id, summary_kind, prompt_version, provider, model, input_hash, output_hash, output_json_blob_id, key_text, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        100,
+        'llm_key_3line',
+        'llm-key-summary-v1',
+        'openai',
+        'gpt-5-mini',
+        'input-hash',
+        'output-hash',
+        null,
+        'intent: Fix retry loop.\nsurface: Downloader.\nmechanism: Changes timeout handling.',
+        now,
+      );
+
+    const result = await service.embedRepository({ owner: 'openclaw', repo: 'openclaw' });
+
+    assert.equal(result.embedded, 1);
+    assert.match(embeddedText, /key_summary:/);
+    assert.match(embeddedText, /intent: Fix retry loop\./);
+  } finally {
+    service.close();
+  }
+});
+
 test('listNeighbors uses the vectorlite sidecar for current active vectors', async () => {
   const service = new GHCrawlService({
     config: makeTestConfig(),

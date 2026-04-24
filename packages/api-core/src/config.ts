@@ -9,7 +9,7 @@ export type SecretProvider = 'plaintext' | 'op';
 export type TuiSortPreference = 'recent' | 'size';
 export type TuiMinClusterSize = 0 | 1 | 10 | 20 | 50;
 export type TuiWideLayoutPreference = 'columns' | 'right-stack';
-export type EmbeddingBasis = 'title_original' | 'title_summary';
+export type EmbeddingBasis = 'title_original' | 'title_summary' | 'llm_key_summary';
 export type VectorBackend = 'vectorlite';
 
 export type TuiRepositoryPreference = {
@@ -181,7 +181,7 @@ function getTuiWideLayoutPreference(value: unknown): TuiWideLayoutPreference | u
 }
 
 function getEmbeddingBasis(value: unknown): EmbeddingBasis | undefined {
-  return value === 'title_original' || value === 'title_summary' ? value : undefined;
+  return value === 'title_original' || value === 'title_summary' || value === 'llm_key_summary' ? value : undefined;
 }
 
 function getVectorBackend(value: unknown): VectorBackend | undefined {

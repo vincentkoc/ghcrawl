@@ -211,6 +211,10 @@ test('buildUpdatePipelineHelpContent explains the LLM summary tradeoff for both 
   const enabled = buildUpdatePipelineHelpContent('title_summary');
   assert.match(enabled, /LLM summaries: enabled/);
   assert.match(enabled, /about 50%/);
+
+  const keySummary = buildUpdatePipelineHelpContent('llm_key_summary');
+  assert.match(keySummary, /3-line key summaries/);
+  assert.match(keySummary, /key-summaries/);
 });
 
 test('buildRefreshCliArgs maps the staged selection to refresh skip flags', () => {

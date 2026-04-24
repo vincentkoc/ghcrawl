@@ -68,7 +68,7 @@ import { buildClusters, buildRefinedClusters, buildSizeBoundedClusters } from '.
 import { buildCodeSnapshotSignature } from './cluster/code-signature.js';
 import { buildDeterministicClusterGraphFromFingerprints, extractDeterministicRefs } from './cluster/deterministic-engine.js';
 import { buildSourceKindEdges } from './cluster/exact-edges.js';
-import { humanKeyForValue } from './cluster/human-key.js';
+import { humanKeyForValue, humanKeyStableSlug } from './cluster/human-key.js';
 import { LLM_KEY_SUMMARY_PROMPT_VERSION, llmKeyInputHash } from './cluster/llm-key-summary.js';
 import {
   createPipelineRun,
@@ -1277,7 +1277,7 @@ export class GHCrawlService {
       newClusterId = upsertClusterGroup(this.db, {
         repoId: repository.id,
         stableKey: identity.hash,
-        stableSlug: identity.slug,
+        stableSlug: humanKeyStableSlug(identity),
         status: 'active',
         clusterType: 'duplicate_candidate',
         representativeThreadId: selectedCanonical.thread_id,
@@ -5920,7 +5920,7 @@ export class GHCrawlService {
         const clusterId = upsertClusterGroup(this.db, {
           repoId,
           stableKey: identity.hash,
-          stableSlug: identity.slug,
+          stableSlug: humanKeyStableSlug(identity),
           status: 'active',
           clusterType: cluster.members.length > 1 ? 'duplicate_candidate' : 'singleton_orphan',
           representativeThreadId: cluster.representativeThreadId,

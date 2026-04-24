@@ -62,3 +62,7 @@ export function humanKeyFromHash(hash: string): HumanKey {
 export function humanKeyForValue(value: string): HumanKey {
   return humanKeyFromHash(stableHash(value));
 }
+
+export function humanKeyStableSlug(key: HumanKey): string {
+  return `${key.slug}-${key.checksum}`;
+}

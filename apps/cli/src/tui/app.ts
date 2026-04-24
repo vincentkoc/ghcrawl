@@ -163,6 +163,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   const clusterDetailCache = new Map<number, TuiClusterDetail>();
   const threadDetailCache = new Map<number, ThreadDetailCacheEntry>();
   let modalOpen = false;
+  let dismissModal: (() => void) | null = null;
   let suppressNextClusterSelect = false;
   let suppressNextMemberSelect = false;
 
@@ -172,6 +173,25 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   };
 
   const formatTuiError = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+  const clearModal = (): void => {
+    modalOpen = false;
+    dismissModal = null;
+  };
+
+  const dismissActiveModal = (): boolean => {
+    if (!modalOpen) {
+      return false;
+    }
+    const dismiss = dismissModal;
+    if (dismiss) {
+      dismiss();
+      return true;
+    }
+    clearModal();
+    render();
+    return true;
+  };
 
   const rebuildClusterItems = (): void => {
     if (!snapshot) {
@@ -569,12 +589,26 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         bg: '#101522',
       },
     });
+    let closed = false;
+    const closePrompt = (): boolean => {
+      if (closed) return false;
+      closed = true;
+      prompt.destroy();
+      clearModal();
+      render();
+      return true;
+    };
+    dismissModal = () => {
+      closePrompt();
+    };
     prompt.input('Filter clusters', search, (_error, value) => {
+      if (closed) return;
+      closed = true;
       search = (value ?? '').trim();
       status = search ? `Filter: ${search}` : 'Filter cleared';
       refreshAll(false);
       prompt.destroy();
-      modalOpen = false;
+      clearModal();
       updateFocus('clusters');
     });
   };
@@ -598,9 +632,23 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         bg: '#101522',
       },
     });
-    prompt.input('Issue or PR number', '', (_error, value) => {
+    let closed = false;
+    const closePrompt = (): boolean => {
+      if (closed) return false;
+      closed = true;
       prompt.destroy();
-      modalOpen = false;
+      clearModal();
+      render();
+      return true;
+    };
+    dismissModal = () => {
+      closePrompt();
+    };
+    prompt.input('Issue or PR number', '', (_error, value) => {
+      if (closed) return;
+      closed = true;
+      prompt.destroy();
+      clearModal();
       const parsed = Number((value ?? '').trim());
       if (!Number.isInteger(parsed) || parsed <= 0) {
         status = 'Enter a positive issue or PR number';
@@ -658,6 +706,60 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     }
   };
 
+  const confirmMutation = (message: string, action: () => { message?: string }): void => {
+    if (modalOpen) return;
+    modalOpen = true;
+    const box = blessed.box({
+      parent: widgets.screen,
+      border: 'line',
+      label: ' Confirm ',
+      top: 'center',
+      left: 'center',
+      width: '62%',
+      height: 7,
+      tags: true,
+      mouse: true,
+      content: `${message}\n\nDefault: no. Press y to confirm, Enter/Esc/n/q to cancel.`,
+      style: {
+        border: { fg: '#fde74c' },
+        fg: 'white',
+        bg: '#101522',
+      },
+    });
+    let closed = false;
+    const closeConfirm = (confirmed: boolean): void => {
+      if (closed) return;
+      closed = true;
+      widgets.screen.off('keypress', handleKeypress);
+      box.destroy();
+      clearModal();
+      if (confirmed) {
+        runLocalMutation(action);
+        return;
+      }
+      status = 'Cancelled';
+      render();
+    };
+    const handleKeypress = (_char: string, key: blessed.Widgets.Events.IKeyEventArg): void => {
+      if (key.name === 'y') {
+        closeConfirm(true);
+        return;
+      }
+      if (key.name === 'enter' || key.name === 'escape' || key.name === 'n' || key.name === 'q') {
+        closeConfirm(false);
+      }
+    };
+    box.on('mousedown', (event: MouseEventArg) => {
+      if (event.button === 'right') {
+        closeConfirm(false);
+      }
+    });
+    dismissModal = () => closeConfirm(false);
+    widgets.screen.on('keypress', handleKeypress);
+    box.focus();
+    widgets.screen.render();
+  };
+
   const openContextMenu = (label: string, items: ContextMenuItem[], event?: MouseEventArg): void => {
     if (modalOpen || items.length === 0) {
       return;
@@ -689,12 +791,21 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       },
     });
 
+    let closed = false;
     const closeMenu = (): void => {
+      if (closed) return;
+      closed = true;
       menu.destroy();
-      modalOpen = false;
+      clearModal();
       render();
     };
+    dismissModal = closeMenu;
     menu.key(['escape', 'q'], closeMenu);
+    menu.on('mousedown', (mouseEvent: MouseEventArg) => {
+      if (mouseEvent.button === 'right') {
+        closeMenu();
+      }
+    });
     menu.on('select', (_item, index) => {
       const item = items[Number(index)];
       closeMenu();
@@ -752,38 +863,44 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       {
         label: 'Close thread locally',
         run: () =>
-          runLocalMutation(() =>
-            params.service.closeThreadLocally({
-              owner: currentRepository.owner,
-              repo: currentRepository.repo,
-              threadNumber: selectedThread.number,
-            }),
+          confirmMutation(
+            `Close ${selectedThread.kind === 'pull_request' ? 'PR' : 'issue'} #${selectedThread.number} locally? This hides it from active sync/cluster views.`,
+            () =>
+              params.service.closeThreadLocally({
+                owner: currentRepository.owner,
+                repo: currentRepository.repo,
+                threadNumber: selectedThread.number,
+              }),
           ),
       },
       {
         label: 'Remove from durable cluster',
         run: () =>
-          runLocalMutation(() =>
-            params.service.excludeThreadFromCluster({
-              owner: currentRepository.owner,
-              repo: currentRepository.repo,
-              clusterId: clusterDetail?.clusterId ?? selectedThread.clusterId ?? 0,
-              threadNumber: selectedThread.number,
-              reason: 'TUI manual remove',
-            }),
+          confirmMutation(
+            `Remove #${selectedThread.number} from durable cluster ${clusterDetail?.clusterId ?? selectedThread.clusterId ?? '?'}? Future clustering should respect this override.`,
+            () =>
+              params.service.excludeThreadFromCluster({
+                owner: currentRepository.owner,
+                repo: currentRepository.repo,
+                clusterId: clusterDetail?.clusterId ?? selectedThread.clusterId ?? 0,
+                threadNumber: selectedThread.number,
+                reason: 'TUI manual remove',
+              }),
           ),
       },
       {
         label: 'Set as durable canonical',
         run: () =>
-          runLocalMutation(() =>
-            params.service.setClusterCanonicalThread({
-              owner: currentRepository.owner,
-              repo: currentRepository.repo,
-              clusterId: clusterDetail?.clusterId ?? selectedThread.clusterId ?? 0,
-              threadNumber: selectedThread.number,
-              reason: 'TUI manual canonical',
-            }),
+          confirmMutation(
+            `Set #${selectedThread.number} as canonical for durable cluster ${clusterDetail?.clusterId ?? selectedThread.clusterId ?? '?'}?`,
+            () =>
+              params.service.setClusterCanonicalThread({
+                owner: currentRepository.owner,
+                repo: currentRepository.repo,
+                clusterId: clusterDetail?.clusterId ?? selectedThread.clusterId ?? 0,
+                threadNumber: selectedThread.number,
+                reason: 'TUI manual canonical',
+              }),
           ),
       },
     ];
@@ -850,12 +967,21 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       },
     });
 
+    let closed = false;
     const closePicker = (): void => {
+      if (closed) return;
+      closed = true;
       picker.destroy();
-      modalOpen = false;
+      clearModal();
       render();
     };
+    dismissModal = closePicker;
     picker.key(['escape', 'q'], closePicker);
+    picker.on('mousedown', (mouseEvent: MouseEventArg) => {
+      if (mouseEvent.button === 'right') {
+        closePicker();
+      }
+    });
     picker.on('select', (_item, index) => {
       const url = links[Number(index)];
       if (!url) {
@@ -900,12 +1026,14 @@ export async function startTui(params: StartTuiParams): Promise<void> {
             {
               label: 'Close cluster locally',
               run: () =>
-                runLocalMutation(() =>
-                  params.service.closeClusterLocally({
-                    owner: currentRepository.owner,
-                    repo: currentRepository.repo,
-                    clusterId: selectedCluster.clusterId,
-                  }),
+                confirmMutation(
+                  `Close cluster ${selectedCluster.clusterId} locally? Default is no.`,
+                  () =>
+                    params.service.closeClusterLocally({
+                      owner: currentRepository.owner,
+                      repo: currentRepository.repo,
+                      clusterId: selectedCluster.clusterId,
+                    }),
                 ),
             },
           ]
@@ -955,13 +1083,13 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         await promptHelp(widgets.screen);
         render();
       } finally {
-        modalOpen = false;
+        clearModal();
       }
     })();
   };
 
   const requestQuit = (): void => {
-    if (modalOpen) return;
+    if (dismissActiveModal()) return;
     widgets.screen.destroy();
   };
 
@@ -1081,7 +1209,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         status = 'Repository action failed';
         pushActivity(`[repo] action failed: ${formatTuiError(error)}`);
       } finally {
-        modalOpen = false;
+        clearModal();
       }
     })();
   };
@@ -1123,7 +1251,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       pushActivity(`[repo] selection failed: ${formatTuiError(error)}`);
       return false;
     } finally {
-      modalOpen = false;
+      clearModal();
     }
   };
 
@@ -1131,7 +1259,10 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     requestQuit();
   });
   widgets.screen.key(['C-c'], () => {
-    requestQuit();
+    widgets.screen.destroy();
+  });
+  widgets.screen.key(['escape'], () => {
+    dismissActiveModal();
   });
   widgets.screen.key(['tab', 'right'], () => {
     if (modalOpen) return;
@@ -1322,6 +1453,11 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   widgets.footer.on('mousedown', (event: MouseEventArg) => {
     if (modalOpen || event.button !== 'right') return;
     openContextMenu('ghcrawl', globalContextItems(), event);
+  });
+  widgets.screen.on('mousedown', (event: MouseEventArg) => {
+    if (event.button === 'right' && modalOpen && dismissModal) {
+      dismissActiveModal();
+    }
   });
   widgets.screen.on('resize', () => render());
 
@@ -1828,8 +1964,12 @@ async function promptHelp(screen: blessed.Widgets.Screen): Promise<void> {
   screen.render();
 
   return await new Promise<void>((resolve) => {
+    let closed = false;
     const finish = (): void => {
+      if (closed) return;
+      closed = true;
       screen.off('keypress', handleKeypress);
+      screen.off('mousedown', handleMouse);
       box.destroy();
       help.destroy();
       screen.render();
@@ -1860,8 +2000,14 @@ async function promptHelp(screen: blessed.Widgets.Screen): Promise<void> {
         screen.render();
       }
     };
+    const handleMouse = (event: MouseEventArg): void => {
+      if (event.button === 'right') {
+        finish();
+      }
+    };
 
     screen.on('keypress', handleKeypress);
+    screen.on('mousedown', handleMouse);
   });
 }
 
@@ -1918,8 +2064,12 @@ async function promptRepositoryChoice(
   screen.render();
 
   return await new Promise<RepositoryChoice | null>((resolve) => {
+    let closed = false;
     const teardown = (): void => {
+      if (closed) return;
+      closed = true;
       screen.off('keypress', handleKeypress);
+      screen.off('mousedown', handleMouse);
       box.destroy();
       help.destroy();
       screen.render();
@@ -1941,8 +2091,14 @@ async function promptRepositoryChoice(
         }
       }
     };
+    const handleMouse = (event: MouseEventArg): void => {
+      if (event.button === 'right') {
+        finish(null);
+      }
+    };
 
     screen.on('keypress', handleKeypress);
+    screen.on('mousedown', handleMouse);
     box.on('select', (_item, index) => finish(choices[index] ?? null));
   });
 }
@@ -1966,10 +2122,26 @@ async function promptRepositoryInput(screen: blessed.Widgets.Screen): Promise<Re
   });
 
   return await new Promise<RepositoryTarget | null>((resolve) => {
-    prompt.input('Repository to open (owner/repo)', '', (_error, value) => {
+    let closed = false;
+    const finish = (value: RepositoryTarget | null): void => {
+      if (closed) return;
+      closed = true;
+      screen.off('mousedown', handleMouse);
       prompt.destroy();
+      screen.render();
+      resolve(value);
+    };
+    const handleMouse = (event: MouseEventArg): void => {
+      if (event.button === 'right') {
+        finish(null);
+      }
+    };
+
+    screen.on('mousedown', handleMouse);
+    prompt.key(['escape'], () => finish(null));
+    prompt.input('Repository to open (owner/repo)', '', (_error, value) => {
       const parsed = parseOwnerRepoValue((value ?? '').trim());
-      resolve(parsed);
+      finish(parsed);
     });
   });
 }

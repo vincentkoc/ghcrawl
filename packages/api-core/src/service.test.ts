@@ -1866,6 +1866,66 @@ test('clusterRepository merges source kinds into one edge without directional du
   }
 });
 
+test('clusterRepository drops weak issue/pr semantic edges', async () => {
+  const service = makeTestService({
+    getRepo: async () => ({}),
+    listRepositoryIssues: async () => [],
+    getIssue: async () => ({}),
+    getPull: async () => ({}),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
+  });
+
+  try {
+    const now = '2026-03-09T00:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+
+    const insertThread = service.db.prepare(
+      `insert into threads (
+        id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+        labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+        merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertThread.run(10, 1, '100', 42, 'issue', 'open', 'Cache invalidation fails', 'Cache entries remain stale.', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, now, null, null, now, now, now);
+    insertThread.run(11, 1, '101', 43, 'pull_request', 'open', 'Worker cleanup', 'Moves worker code.', 'bob', 'User', 'https://github.com/openclaw/openclaw/pull/43', '[]', '[]', '{}', 'hash-43', 0, now, now, null, null, now, now, now);
+    insertThread.run(12, 1, '102', 44, 'issue', 'open', 'Cache invalidation stale entries', 'Stale cache entries are not removed.', 'carol', 'User', 'https://github.com/openclaw/openclaw/issues/44', '[]', '[]', '{}', 'hash-44', 0, now, now, null, null, now, now, now);
+
+    const insertEmbedding = service.db.prepare(
+      `insert into document_embeddings (thread_id, source_kind, model, dimensions, content_hash, embedding_json, created_at, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const sourceKind of ['title', 'body', 'dedupe_summary'] as const) {
+      insertEmbedding.run(10, sourceKind, 'text-embedding-3-large', 2, `hash-42-${sourceKind}`, '[1,0]', now, now);
+      insertEmbedding.run(11, sourceKind, 'text-embedding-3-large', 2, `hash-43-${sourceKind}`, '[0.8,-0.6]', now, now);
+      insertEmbedding.run(12, sourceKind, 'text-embedding-3-large', 2, `hash-44-${sourceKind}`, '[0.83,0.56]', now, now);
+    }
+
+    const result = await service.clusterRepository({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      k: 2,
+      minScore: 0.78,
+    });
+
+    const edges = service.db.prepare(
+      'select left_thread_id, right_thread_id from similarity_edges where cluster_run_id = ? order by left_thread_id, right_thread_id',
+    ).all(result.runId) as Array<{ left_thread_id: number; right_thread_id: number }>;
+
+    assert.deepEqual(edges, [{ left_thread_id: 10, right_thread_id: 12 }]);
+    assert.equal(result.edges, 1);
+  } finally {
+    service.close();
+  }
+});
+
 test('clusterRepository prunes older cluster runs for the repo after a successful rebuild', async () => {
   const service = makeTestService({
     getRepo: async () => ({}),

@@ -141,6 +141,12 @@ type CommentSeed = {
 
 type EmbeddingSourceKind = 'title' | 'body' | 'dedupe_summary' | 'llm_key_summary';
 type SimilaritySourceKind = EmbeddingSourceKind | 'deterministic_fingerprint';
+type AggregatedClusterEdge = {
+  leftThreadId: number;
+  rightThreadId: number;
+  score: number;
+  sourceKinds: Set<SimilaritySourceKind>;
+};
 
 type EmbeddingTask = {
   threadId: number;
@@ -420,6 +426,7 @@ const SUMMARY_PROMPT_VERSION = 'v1';
 const ACTIVE_EMBED_DIMENSIONS = 1024;
 const ACTIVE_EMBED_PIPELINE_VERSION = 'vectorlite-1024-v1';
 const DEFAULT_CLUSTER_MIN_SCORE = 0.78;
+const DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE = 0.88;
 const DEFAULT_CLUSTER_MAX_SIZE = 24;
 const VECTORLITE_CLUSTER_EXPANDED_K = 24;
 const VECTORLITE_CLUSTER_EXPANDED_MULTIPLIER = 4;
@@ -2022,6 +2029,7 @@ export class GHCrawlService {
           minScore: params.minScore ?? DEFAULT_CLUSTER_MIN_SCORE,
           maxClusterSize: params.maxClusterSize ?? DEFAULT_CLUSTER_MAX_SIZE,
           clusterMode: 'size_bounded',
+          crossKindMinScore: Math.max(params.minScore ?? DEFAULT_CLUSTER_MIN_SCORE, DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE),
           k: params.k ?? 6,
           embedModel: this.config.embedModel,
           embeddingBasis: this.config.embeddingBasis,
@@ -2029,6 +2037,7 @@ export class GHCrawlService {
       ),
     });
     const minScore = params.minScore ?? DEFAULT_CLUSTER_MIN_SCORE;
+    const crossKindMinScore = Math.max(minScore, DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE);
     const maxClusterSize = params.maxClusterSize ?? DEFAULT_CLUSTER_MAX_SIZE;
     const k = params.k ?? 6;
 
@@ -2059,7 +2068,7 @@ export class GHCrawlService {
         persistedFingerprints,
         { topK: Math.max(k * 8, 64), seedThreadIds },
       );
-      const aggregatedEdges = new Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<SimilaritySourceKind> }>();
+      const aggregatedEdges = new Map<string, AggregatedClusterEdge>();
       this.mergeSourceKindEdges(
         aggregatedEdges,
         deterministic.edges.filter((edge) => edge.score >= minScore),
@@ -2132,6 +2141,14 @@ export class GHCrawlService {
         }
       }
 
+      const threadKinds = new Map(deterministicItems.map((item) => [item.id, item.kind]));
+      const droppedCrossKindEdges = this.pruneWeakCrossKindEdges(aggregatedEdges, threadKinds, crossKindMinScore);
+      if (droppedCrossKindEdges > 0) {
+        params.onProgress?.(
+          `[cluster] dropped ${droppedCrossKindEdges} weak issue/pr edge(s) below cross_kind_min_score=${crossKindMinScore}`,
+        );
+      }
+
       const edges = Array.from(aggregatedEdges.values()).map((entry) => ({
         leftThreadId: entry.leftThreadId,
         rightThreadId: entry.rightThreadId,
@@ -2172,7 +2189,13 @@ export class GHCrawlService {
           : `[cluster] persisted ${clusters.length} cluster(s) and pruned older cluster runs`,
       );
 
-      const stats = { edges: edges.length, clusters: clusters.length, threadNumber: params.threadNumber ?? null };
+      const stats = {
+        edges: edges.length,
+        clusters: clusters.length,
+        threadNumber: params.threadNumber ?? null,
+        droppedCrossKindEdges,
+        crossKindMinScore,
+      };
       this.finishRun('cluster_runs', runId, 'completed', stats);
       finishPipelineRun(this.db, pipelineRunId, { status: 'completed', stats });
       return clusterResultSchema.parse({ runId, edges: edges.length, clusters: clusters.length });
@@ -5565,8 +5588,8 @@ export class GHCrawlService {
     repoId: number,
     sourceKinds: EmbeddingSourceKind[],
     params: { limit: number; minScore: number; onProgress?: (message: string) => void },
-  ): Promise<Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<SimilaritySourceKind> }>> {
-    const aggregated = new Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<SimilaritySourceKind> }>();
+  ): Promise<Map<string, AggregatedClusterEdge>> {
+    const aggregated = new Map<string, AggregatedClusterEdge>();
     const totalItems = sourceKinds.reduce((sum, sourceKind) => sum + this.countEmbeddingsForSourceKind(repoId, sourceKind), 0);
 
     if (sourceKinds.length === 0 || totalItems === 0) {
@@ -5662,7 +5685,7 @@ export class GHCrawlService {
   }
 
   private mergeSourceKindEdges(
-    aggregated: Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<SimilaritySourceKind> }>,
+    aggregated: Map<string, AggregatedClusterEdge>,
     edges: Array<{ leftThreadId: number; rightThreadId: number; score: number }>,
     sourceKind: SimilaritySourceKind,
   ): void {
@@ -5681,6 +5704,27 @@ export class GHCrawlService {
         sourceKinds: new Set([sourceKind]),
       });
     }
+  }
+
+  private pruneWeakCrossKindEdges(
+    aggregated: Map<string, AggregatedClusterEdge>,
+    threadKinds: Map<number, 'issue' | 'pull_request'>,
+    crossKindMinScore: number,
+  ): number {
+    let dropped = 0;
+    for (const [key, edge] of aggregated) {
+      const leftKind = threadKinds.get(edge.leftThreadId);
+      const rightKind = threadKinds.get(edge.rightThreadId);
+      if (!leftKind || !rightKind || leftKind === rightKind) {
+        continue;
+      }
+      if (edge.sourceKinds.has('deterministic_fingerprint') || edge.score >= crossKindMinScore) {
+        continue;
+      }
+      aggregated.delete(key);
+      dropped += 1;
+    }
+    return dropped;
   }
 
   private collectSourceKindScores(
@@ -5794,7 +5838,7 @@ export class GHCrawlService {
   private persistClusterRun(
     repoId: number,
     runId: number,
-    aggregatedEdges: Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<SimilaritySourceKind> }>,
+    aggregatedEdges: Map<string, AggregatedClusterEdge>,
     clusters: Array<{ representativeThreadId: number; members: number[] }>,
   ): void {
     const insertEdge = this.db.prepare(
@@ -5848,7 +5892,7 @@ export class GHCrawlService {
   private persistDurableClusterState(
     repoId: number,
     pipelineRunId: number,
-    aggregatedEdges: Map<string, { leftThreadId: number; rightThreadId: number; score: number; sourceKinds: Set<SimilaritySourceKind> }>,
+    aggregatedEdges: Map<string, AggregatedClusterEdge>,
     clusters: Array<{ representativeThreadId: number; members: number[] }>,
   ): void {
     this.db.transaction(() => {

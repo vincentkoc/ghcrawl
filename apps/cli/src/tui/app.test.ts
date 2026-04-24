@@ -143,8 +143,9 @@ test('renderMarkdownForTerminal formats common markdown without exposing blessed
 
   assert.match(rendered, /\{bold\}Heading \\{boom\\}\{\/bold\}/);
   assert.match(rendered, /- \{bold\}bold\{\/bold\} and \{yellow-fg\}code\{\/yellow-fg\}/);
-  assert.match(rendered, /\x1B\]8;;https:\/\/example\.com\/path/);
-  assert.match(rendered, /\x1B\]8;;https:\/\/example\.com\/raw/);
+  assert.match(rendered, /site <https:\/\/example\.com\/path>/);
+  assert.match(rendered, /https:\/\/example\.com\/raw/);
+  assert.doesNotMatch(rendered, /\x1B\]8;;/);
 });
 
 test('buildThreadContextMenuItems exposes thread actions for right-click menus', () => {

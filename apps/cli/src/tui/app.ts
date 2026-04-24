@@ -1194,8 +1194,14 @@ function renderInlineText(value: string): string {
 }
 
 function formatTerminalLink(url: string, label: string): string {
-  const escapedUrl = url.replace(/[\u0007\u001b]/g, '');
-  return `\u001b]8;;${escapedUrl}\u0007${escapeBlessedText(label)}\u001b]8;;\u0007`;
+  const safeUrl = stripTerminalControls(url);
+  const safeLabel = stripTerminalControls(label);
+  const visibleLink = safeLabel && safeLabel !== safeUrl ? `${safeLabel} <${safeUrl}>` : safeUrl;
+  return escapeBlessedText(visibleLink);
+}
+
+function stripTerminalControls(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, '');
 }
 
 export function buildThreadContextMenuItems(threadDetail: TuiThreadDetail | null): ThreadContextMenuItem[] {

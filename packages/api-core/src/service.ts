@@ -84,6 +84,7 @@ import {
 } from './cluster/persistent-store.js';
 import {
   buildDeterministicThreadFingerprint,
+  fingerprintFeatureHash,
   THREAD_FINGERPRINT_ALGORITHM_VERSION,
   type DeterministicThreadFingerprint,
 } from './cluster/thread-fingerprint.js';
@@ -425,9 +426,10 @@ const KEY_SUMMARY_MAX_UNREAD = 48;
 const SUMMARY_PROMPT_VERSION = 'v1';
 const ACTIVE_EMBED_DIMENSIONS = 1024;
 const ACTIVE_EMBED_PIPELINE_VERSION = 'vectorlite-1024-v1';
-const DEFAULT_CLUSTER_MIN_SCORE = 0.78;
-const DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE = 0.88;
-const DEFAULT_CLUSTER_MAX_SIZE = 24;
+const DEFAULT_CLUSTER_MIN_SCORE = 0.76;
+const DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE = 0.48;
+const DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE = 0.9;
+const DEFAULT_CLUSTER_MAX_SIZE = 48;
 const VECTORLITE_CLUSTER_EXPANDED_K = 24;
 const VECTORLITE_CLUSTER_EXPANDED_MULTIPLIER = 4;
 const VECTORLITE_CLUSTER_EXPANDED_CANDIDATE_K = 512;
@@ -2038,9 +2040,10 @@ export class GHCrawlService {
       ),
     });
     const minScore = params.minScore ?? DEFAULT_CLUSTER_MIN_SCORE;
+    const deterministicMinScore = Math.min(minScore, DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE);
     const crossKindMinScore = Math.max(minScore, DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE);
     const maxClusterSize = params.maxClusterSize ?? DEFAULT_CLUSTER_MAX_SIZE;
-    const k = params.k ?? 6;
+    const k = params.k ?? 12;
 
     try {
       const seedThread = params.threadNumber
@@ -2072,7 +2075,12 @@ export class GHCrawlService {
       const aggregatedEdges = new Map<string, AggregatedClusterEdge>();
       this.mergeSourceKindEdges(
         aggregatedEdges,
-        deterministic.edges.filter((edge) => edge.score >= minScore),
+        deterministic.edges
+          .filter((edge) => edge.tier === 'strong' || edge.score >= deterministicMinScore)
+          .map((edge) => ({
+            ...edge,
+            score: Math.max(edge.score, edge.tier === 'strong' ? 0.94 : Math.min(0.86, minScore + 0.04)),
+          })),
         'deterministic_fingerprint',
       );
       params.onProgress?.(
@@ -5277,21 +5285,37 @@ export class GHCrawlService {
         labels: item.labels,
         rawJson: item.rawJson,
       });
+      const inferredRefs = extractDeterministicRefs(`${item.title}\n${item.body ?? ''}`);
+      const featureHash = fingerprintFeatureHash({
+        linkedRefs: inferredRefs,
+        changedFiles: item.changedFiles,
+        hunkSignatures: item.hunkSignatures,
+        patchIds: item.patchIds,
+      });
       const existing = this.db
         .prepare(
-          `select id
+          `select id, feature_json
            from thread_fingerprints
            where thread_revision_id = ?
              and algorithm_version = ?
            limit 1`,
         )
-        .get(revisionId, THREAD_FINGERPRINT_ALGORITHM_VERSION) as { id: number } | undefined;
+        .get(revisionId, THREAD_FINGERPRINT_ALGORITHM_VERSION) as { id: number; feature_json: string } | undefined;
       if (existing) {
-        skipped += 1;
-        continue;
+        const existingFeatureHash = (() => {
+          try {
+            const feature = JSON.parse(existing.feature_json) as Record<string, unknown>;
+            return typeof feature.featureHash === 'string' ? feature.featureHash : null;
+          } catch {
+            return null;
+          }
+        })();
+        if (existingFeatureHash === featureHash) {
+          skipped += 1;
+          continue;
+        }
       }
 
-      const inferredRefs = extractDeterministicRefs(`${item.title}\n${item.body ?? ''}`);
       const fingerprint = buildDeterministicThreadFingerprint({
         threadId: item.id,
         number: item.number,
@@ -5375,6 +5399,7 @@ export class GHCrawlService {
         changedFiles: stringFeature('changedFiles'),
         hunkSignatures: stringFeature('hunkSignatures'),
         patchIds: stringFeature('patchIds'),
+        featureHash: typeof feature.featureHash === 'string' ? feature.featureHash : '',
         minhashSignature: row.minhash_signature_blob_id
           ? parseStringArrayJson(readTextBlob(this.db, this.blobStoreRoot(), row.minhash_signature_blob_id))
           : [],

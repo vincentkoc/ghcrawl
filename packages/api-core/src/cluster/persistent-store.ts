@@ -123,6 +123,7 @@ export function upsertThreadFingerprint(
     changedFiles: params.fingerprint.changedFiles,
     hunkSignatures: params.fingerprint.hunkSignatures,
     patchIds: params.fingerprint.patchIds,
+    featureHash: params.fingerprint.featureHash,
   });
   db.prepare(
     `insert into thread_fingerprints (

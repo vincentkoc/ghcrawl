@@ -1,5 +1,5 @@
 import { buildShingles, jaccard, minhashSignature, minhashSimilarity, simhash64, simhashSimilarity, winnowingFingerprints } from './fingerprint-algorithms.js';
-import { humanKeyForValue } from './human-key.js';
+import { humanKeyForValue, stableHash } from './human-key.js';
 
 const TOKEN_RE = /[a-zA-Z0-9_]+/g;
 const TITLE_STOPWORDS = new Set([
@@ -54,6 +54,7 @@ export type DeterministicThreadFingerprint = {
   changedFiles: string[];
   hunkSignatures: string[];
   patchIds: string[];
+  featureHash: string;
   minhashSignature: string[];
   simhash64: string;
   winnowHashes: string[];
@@ -85,6 +86,26 @@ export function moduleBucket(path: string, depth = 2): string {
   return `${parts.slice(0, depth).join('/')}/*`;
 }
 
+export function fingerprintFeatureHash(input: {
+  linkedRefs: string[];
+  changedFiles: string[];
+  moduleBuckets?: string[];
+  hunkSignatures: string[];
+  patchIds: string[];
+}): string {
+  const changedFiles = uniqueSorted(input.changedFiles);
+  const moduleBuckets = uniqueSorted(input.moduleBuckets ?? changedFiles.map((path) => moduleBucket(path)));
+  return stableHash(
+    JSON.stringify({
+      linkedRefs: uniqueSorted(input.linkedRefs),
+      changedFiles,
+      moduleBuckets,
+      hunkSignatures: uniqueSorted(input.hunkSignatures),
+      patchIds: uniqueSorted(input.patchIds),
+    }),
+  );
+}
+
 function uniqueSorted(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean))).sort();
 }
@@ -107,6 +128,7 @@ export function buildDeterministicThreadFingerprint(input: FingerprintInput): De
   const patchIds = uniqueSorted(input.patchIds ?? []);
   const moduleBuckets = uniqueSorted(changedFiles.map((path) => moduleBucket(path)));
   const salientTitleTokens = uniqueSorted(titleTokens.filter((token) => token.length >= 4 && !TITLE_STOPWORDS.has(token)));
+  const featureHash = fingerprintFeatureHash({ linkedRefs, changedFiles, moduleBuckets, hunkSignatures, patchIds });
   const materialTokens = [
     ...titleTokens,
     ...bodyTokens,
@@ -146,6 +168,7 @@ export function buildDeterministicThreadFingerprint(input: FingerprintInput): De
     changedFiles,
     hunkSignatures,
     patchIds,
+    featureHash,
     minhashSignature: minhash,
     simhash64: simhash,
     winnowHashes: winnow,

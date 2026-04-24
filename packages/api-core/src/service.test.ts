@@ -2997,6 +2997,77 @@ test('excludeThreadFromCluster records a durable manual exclusion', () => {
   }
 });
 
+test('syncRepository records actors and repo stats from thread and comment authors', async () => {
+  const service = makeTestService({
+    checkAuth: async () => undefined,
+    getRepo: async () => ({ id: 1, full_name: 'openclaw/openclaw' }),
+    listRepositoryIssues: async () => [
+      {
+        id: 100,
+        number: 42,
+        state: 'open',
+        title: 'Downloader hangs',
+        body: 'The transfer never finishes.',
+        html_url: 'https://github.com/openclaw/openclaw/issues/42',
+        labels: [],
+        user: { id: 501, login: 'alice', type: 'User', site_admin: false },
+        created_at: '2026-03-09T00:00:00Z',
+        updated_at: '2026-03-09T00:00:00Z',
+      },
+    ],
+    getIssue: async () => {
+      throw new Error('not expected');
+    },
+    getPull: async () => {
+      throw new Error('not expected');
+    },
+    listIssueComments: async () => [
+      {
+        id: 900,
+        body: 'same here',
+        user: { id: 502, login: 'bob', type: 'User', site_admin: false },
+        created_at: '2026-03-09T01:00:00Z',
+        updated_at: '2026-03-09T01:00:00Z',
+      },
+    ],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+  });
+
+  try {
+    await service.syncRepository({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      includeComments: true,
+      limit: 1,
+    });
+
+    const actors = service.db.prepare('select login, actor_type from actors order by login').all() as Array<{
+      login: string;
+      actor_type: string;
+    }>;
+    const stats = service.db
+      .prepare(
+        `select a.login, s.opened_issues, s.comments
+         from actor_repo_stats s
+         join actors a on a.id = s.actor_id
+         order by a.login`,
+      )
+      .all() as Array<{ login: string; opened_issues: number; comments: number }>;
+
+    assert.deepEqual(actors, [
+      { login: 'alice', actor_type: 'User' },
+      { login: 'bob', actor_type: 'User' },
+    ]);
+    assert.deepEqual(stats, [
+      { login: 'alice', opened_issues: 1, comments: 0 },
+      { login: 'bob', opened_issues: 0, comments: 1 },
+    ]);
+  } finally {
+    service.close();
+  }
+});
+
 test('syncRepository reconciles stale open threads and marks confirmed closures without re-fetching comments', async () => {
   let listIssueCommentCalls = 0;
   let getIssueCalls = 0;

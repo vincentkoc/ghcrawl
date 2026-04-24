@@ -58,7 +58,9 @@ import { humanKeyForValue } from './cluster/human-key.js';
 import {
   createPipelineRun,
   finishPipelineRun,
+  refreshActorRepoStats,
   recordClusterEvent,
+  upsertActor,
   upsertClusterGroup,
   upsertClusterMembership,
   upsertSimilarityEdgeEvidence,
@@ -1081,6 +1083,7 @@ export class GHCrawlService {
         lastReconciledOpenCloseAt: reconciledOpenCloseAt ?? syncCursor.lastReconciledOpenCloseAt,
       };
       this.writeSyncCursorState(repoId, nextSyncCursor);
+      refreshActorRepoStats(this.db, repoId);
 
       this.finishRun('sync_runs', runId, 'completed', {
         threadsSynced,
@@ -3165,48 +3168,63 @@ export class GHCrawlService {
 
     const issueComments = await github.listIssueComments(owner, repo, number, reporter);
     comments.push(
-      ...issueComments.map((comment) => ({
-        githubId: String(comment.id),
-        commentType: 'issue_comment',
-        authorLogin: userLogin(comment),
-        authorType: userType(comment),
-        body: String(comment.body ?? ''),
-        isBot: isBotLikeAuthor({ authorLogin: userLogin(comment), authorType: userType(comment) }),
-        rawJson: asJson(comment),
-        createdAtGh: typeof comment.created_at === 'string' ? comment.created_at : null,
-        updatedAtGh: typeof comment.updated_at === 'string' ? comment.updated_at : null,
-      })),
+      ...issueComments.map((comment) => {
+        this.upsertActorFromPayload(comment);
+        const authorLogin = userLogin(comment);
+        const authorType = userType(comment);
+        return {
+          githubId: String(comment.id),
+          commentType: 'issue_comment',
+          authorLogin,
+          authorType,
+          body: String(comment.body ?? ''),
+          isBot: isBotLikeAuthor({ authorLogin, authorType }),
+          rawJson: asJson(comment),
+          createdAtGh: typeof comment.created_at === 'string' ? comment.created_at : null,
+          updatedAtGh: typeof comment.updated_at === 'string' ? comment.updated_at : null,
+        };
+      }),
     );
 
     if (isPr) {
       const reviews = await github.listPullReviews(owner, repo, number, reporter);
       comments.push(
-        ...reviews.map((review) => ({
-          githubId: String(review.id),
-          commentType: 'review',
-          authorLogin: userLogin(review),
-          authorType: userType(review),
-          body: String(review.body ?? review.state ?? ''),
-          isBot: isBotLikeAuthor({ authorLogin: userLogin(review), authorType: userType(review) }),
-          rawJson: asJson(review),
-          createdAtGh: typeof review.submitted_at === 'string' ? review.submitted_at : null,
-          updatedAtGh: typeof review.submitted_at === 'string' ? review.submitted_at : null,
-        })),
+        ...reviews.map((review) => {
+          this.upsertActorFromPayload(review);
+          const authorLogin = userLogin(review);
+          const authorType = userType(review);
+          return {
+            githubId: String(review.id),
+            commentType: 'review',
+            authorLogin,
+            authorType,
+            body: String(review.body ?? review.state ?? ''),
+            isBot: isBotLikeAuthor({ authorLogin, authorType }),
+            rawJson: asJson(review),
+            createdAtGh: typeof review.submitted_at === 'string' ? review.submitted_at : null,
+            updatedAtGh: typeof review.submitted_at === 'string' ? review.submitted_at : null,
+          };
+        }),
       );
 
       const reviewComments = await github.listPullReviewComments(owner, repo, number, reporter);
       comments.push(
-        ...reviewComments.map((comment) => ({
-          githubId: String(comment.id),
-          commentType: 'review_comment',
-          authorLogin: userLogin(comment),
-          authorType: userType(comment),
-          body: String(comment.body ?? ''),
-          isBot: isBotLikeAuthor({ authorLogin: userLogin(comment), authorType: userType(comment) }),
-          rawJson: asJson(comment),
-          createdAtGh: typeof comment.created_at === 'string' ? comment.created_at : null,
-          updatedAtGh: typeof comment.updated_at === 'string' ? comment.updated_at : null,
-        })),
+        ...reviewComments.map((comment) => {
+          this.upsertActorFromPayload(comment);
+          const authorLogin = userLogin(comment);
+          const authorType = userType(comment);
+          return {
+            githubId: String(comment.id),
+            commentType: 'review_comment',
+            authorLogin,
+            authorType,
+            body: String(comment.body ?? ''),
+            isBot: isBotLikeAuthor({ authorLogin, authorType }),
+            rawJson: asJson(comment),
+            createdAtGh: typeof comment.created_at === 'string' ? comment.created_at : null,
+            updatedAtGh: typeof comment.updated_at === 'string' ? comment.updated_at : null,
+          };
+        }),
       );
     }
 
@@ -3252,6 +3270,21 @@ export class GHCrawlService {
     return row.id;
   }
 
+  private upsertActorFromPayload(payload: Record<string, unknown>): number | null {
+    const user = payload.user as Record<string, unknown> | undefined;
+    const login = userLogin(payload);
+    if (!user || !login) return null;
+    const providerUserId = user.id === undefined || user.id === null ? login : String(user.id);
+    return upsertActor(this.db, {
+      providerUserId,
+      login,
+      displayName: typeof user.name === 'string' ? user.name : null,
+      actorType: userType(payload),
+      siteAdmin: user.site_admin === true,
+      rawJson: asJson(user),
+    });
+  }
+
   private upsertThread(
     repoId: number,
     kind: 'issue' | 'pull_request',
@@ -3263,6 +3296,7 @@ export class GHCrawlService {
     const labels = parseLabels(payload);
     const assignees = parseAssignees(payload);
     const contentHash = stableContentHash(`${title}\n${body ?? ''}`);
+    this.upsertActorFromPayload(payload);
     this.db
       .prepare(
         `insert into threads (

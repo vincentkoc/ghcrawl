@@ -8,6 +8,7 @@ import {
   buildHelpContent,
   escapeBlessedText,
   formatClusterDateColumn,
+  formatClusterListHeader,
   formatClusterListLabel,
   formatClusterShortName,
   getRepositoryChoices,
@@ -83,6 +84,14 @@ test('renderDetailPane escapes user-provided text before rendering into a tags-e
   assert.ok(rendered.indexOf('LLM Summary:') < rendered.indexOf('{bold}Main{/bold}'));
 });
 
+test('renderDetailPane gives useful empty detail content before a cluster is selected', () => {
+  const rendered = renderDetailPane(null, null, 'clusters');
+
+  assert.match(rendered, /No repository selected/);
+  assert.match(rendered, /s sort/);
+  assert.match(rendered, /right-click any pane/);
+});
+
 test('parseOwnerRepoValue accepts owner slash repo values and rejects invalid ones', () => {
   assert.deepEqual(parseOwnerRepoValue('openclaw/openclaw'), { owner: 'openclaw', repo: 'openclaw' });
   assert.equal(parseOwnerRepoValue('openclaw'), null);
@@ -120,6 +129,11 @@ test('formatClusterListLabel keeps counts first and splits cluster name from tit
   assert.match(label, /^\s*3\s+alpha-beta-gamma\s+Fix: dedupe section title\/desc/);
   assert.match(label, /0I\/3P/);
   assert.doesNotMatch(label, /items/);
+});
+
+test('formatClusterListHeader marks the active clickable sort column', () => {
+  assert.match(formatClusterListHeader('size'), /cnt↓/);
+  assert.match(formatClusterListHeader('recent'), /updated↓/);
 });
 
 test('formatClusterShortName returns the first meaningful words', () => {
@@ -225,7 +239,7 @@ test('buildHelpContent includes the full key command list', () => {
   assert.match(content, /TUI only reads local SQLite/);
   assert.match(content, /default cluster filter is 1\+/);
   assert.match(content, /default sort is size/);
-  assert.match(content, /right-click threads for actions/);
+  assert.match(content, /right-click opens pane actions/);
   assert.match(content, /p\s+open the repository browser/);
   assert.match(content, /l\s+toggle wide layout/);
   assert.match(content, /x\s+show or hide locally closed clusters and members/);

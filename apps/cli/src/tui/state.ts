@@ -5,7 +5,7 @@ export type TuiMinSizeFilter = 0 | 1 | 2 | 10 | 20 | 50;
 
 export type MemberListRow =
   | { key: string; label: string; selectable: false }
-  | { key: string; label: string; selectable: true; threadId: number };
+  | { key: string; label: string; selectable: true; threadId: number; isClosed: boolean; kind: 'issue' | 'pull_request' };
 
 export const SORT_MODE_ORDER: TuiClusterSortMode[] = ['size', 'recent'];
 export const MIN_SIZE_FILTER_ORDER: TuiMinSizeFilter[] = [1, 2, 10, 20, 50, 0];
@@ -62,6 +62,8 @@ export function buildMemberRows(detail: TuiClusterDetail | null, options?: { inc
         label: formatMemberLabel(issue.number, issue.title, issue.updatedAtGh, issue.isClosed),
         selectable: true,
         threadId: issue.id,
+        isClosed: issue.isClosed,
+        kind: issue.kind,
       });
     }
   }
@@ -74,6 +76,8 @@ export function buildMemberRows(detail: TuiClusterDetail | null, options?: { inc
         label: formatMemberLabel(pullRequest.number, pullRequest.title, pullRequest.updatedAtGh, pullRequest.isClosed),
         selectable: true,
         threadId: pullRequest.id,
+        isClosed: pullRequest.isClosed,
+        kind: pullRequest.kind,
       });
     }
   }
@@ -114,7 +118,8 @@ function compareClusters(left: TuiClusterSummary, right: TuiClusterSummary, sort
 
 function formatMemberLabel(number: number, title: string, updatedAtGh: string | null, isClosed: boolean): string {
   const updated = formatRelativeTime(updatedAtGh);
-  const label = escapeBlessedInline(`#${number}  ${updated}  ${title}`);
+  const status = isClosed ? 'closed  ' : '';
+  const label = escapeBlessedInline(`#${number}  ${status}${updated}  ${normalizeMemberTitle(title)}`);
   return isClosed ? `{gray-fg}${label}{/gray-fg}` : label;
 }
 
@@ -135,10 +140,19 @@ export function formatRelativeTime(value: string | null, now: Date = new Date())
   if (diffMs < dayMs) {
     return `${Math.floor(diffMs / hourMs)}h ago`;
   }
-  if (diffMs < 14 * dayMs) {
+  if (diffMs < 60 * dayMs) {
     return `${Math.floor(diffMs / dayMs)}d ago`;
   }
-  return parsed.toISOString().slice(0, 10);
+  const monthMs = 30 * dayMs;
+  const yearMs = 365 * dayMs;
+  if (diffMs < 2 * yearMs) {
+    return `${Math.max(1, Math.floor(diffMs / monthMs))}mo ago`;
+  }
+  return `${Math.max(1, Math.floor(diffMs / yearMs))}y ago`;
+}
+
+function normalizeMemberTitle(title: string): string {
+  return title.replace(/^\[([^\]]{1,30})\]:?\s+/, '$1: ');
 }
 
 function escapeBlessedInline(value: string): string {

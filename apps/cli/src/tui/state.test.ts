@@ -28,6 +28,8 @@ test('formatRelativeTime returns compact human readable ages', () => {
   assert.equal(formatRelativeTime('2026-04-24T11:58:00Z', now), '2m ago');
   assert.equal(formatRelativeTime('2026-04-24T06:00:00Z', now), '6h ago');
   assert.equal(formatRelativeTime('2026-04-18T12:00:00Z', now), '6d ago');
+  assert.equal(formatRelativeTime('2026-03-12T12:00:00Z', now), '43d ago');
+  assert.equal(formatRelativeTime('2026-01-12T12:00:00Z', now), '3mo ago');
 });
 
 test('applyClusterFilters sorts by recent and size and respects min size/search', () => {
@@ -118,8 +120,8 @@ test('buildMemberRows groups issues and pull requests and selection skips header
         id: 11,
         number: 43,
         kind: 'pull_request',
-        isClosed: false,
-        title: 'PR one',
+        isClosed: true,
+        title: '[Bug]: PR one',
         updatedAtGh: '2026-03-09T10:00:00Z',
         htmlUrl: 'https://example.com/43',
         labels: ['bug'],
@@ -130,7 +132,8 @@ test('buildMemberRows groups issues and pull requests and selection skips header
 
   const rows = buildMemberRows(detail);
   assert.equal(rows[0]?.selectable, false);
-  assert.match(rows[1]?.label ?? '', /#42\s+\d+d ago|#42\s+2026-03-09/);
+  assert.match(rows[1]?.label ?? '', /#42\s+\d+d ago/);
+  assert.match(rows[3]?.label ?? '', /closed\s+\d+d ago\s+Bug: PR one/);
   assert.equal(findSelectableIndex(rows, 10), 1);
   assert.equal(moveSelectableIndex(rows, 1, 1), 3);
 });

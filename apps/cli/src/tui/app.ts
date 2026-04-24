@@ -74,6 +74,11 @@ export type ThreadContextMenuItem = {
   action: ThreadContextAction;
 };
 
+type ContextMenuItem = {
+  label: string;
+  run: () => boolean | void;
+};
+
 export function resolveBlessedTerminal(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const term = env.TERM;
   if (!term) {
@@ -94,6 +99,8 @@ function createScreen(options: Parameters<typeof blessed.screen>[0]): blessed.Wi
 
 const ACTIVITY_LOG_LIMIT = 200;
 const FOOTER_LOG_LINES = 1;
+const CLUSTER_LIST_HEADER_INDEX = 0;
+const CLUSTER_LIST_FIRST_ITEM_INDEX = 1;
 
 export async function startTui(params: StartTuiParams): Promise<void> {
   const selectedRepository = params.owner && params.repo ? { owner: params.owner, repo: params.repo } : null;
@@ -124,6 +131,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   const clusterDetailCache = new Map<number, TuiClusterDetail>();
   const threadDetailCache = new Map<number, ThreadDetailCacheEntry>();
   let modalOpen = false;
+  let suppressNextClusterSelect = false;
 
   const clearCaches = (): void => {
     clusterDetailCache.clear();
@@ -141,11 +149,12 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     }
 
     clusterIndexById = new Map();
-    clusterItems = snapshot.clusters.map((cluster, index) => {
-      clusterIndexById.set(cluster.clusterId, index);
+    clusterItems = [`{bold}${formatClusterListHeader(sortMode)}{/bold}`];
+    clusterItems.push(...snapshot.clusters.map((cluster, index) => {
+      clusterIndexById.set(cluster.clusterId, index + CLUSTER_LIST_FIRST_ITEM_INDEX);
       const label = formatClusterListLabel(cluster);
       return cluster.isClosed ? `{gray-fg}${escapeBlessedText(label)}{/gray-fg}` : escapeBlessedText(label);
-    });
+    }));
     widgets.clusters.setItems(clusterItems);
   };
 
@@ -328,7 +337,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
 
     isRendering = true;
     try {
-      const clusterIndex = snapshot && selectedClusterId !== null ? Math.max(0, clusterIndexById.get(selectedClusterId) ?? -1) : 0;
+      const clusterIndex =
+        snapshot && selectedClusterId !== null ? Math.max(CLUSTER_LIST_FIRST_ITEM_INDEX, clusterIndexById.get(selectedClusterId) ?? -1) : CLUSTER_LIST_HEADER_INDEX;
       widgets.clusters.select(clusterIndex);
 
       widgets.members.setItems(memberRows.length > 0 ? memberRows.map((row) => row.label) : ['No members']);
@@ -339,7 +349,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       isRendering = false;
     }
 
-    widgets.detail.setContent(renderDetailPane(threadDetail, clusterDetail, focusPane));
+    widgets.detail.setContent(renderDetailPane(threadDetail, clusterDetail, focusPane, snapshot));
     updatePaneStyles(widgets, focusPane);
     const footerLines = [
       activityLines.at(-1) ?? status,
@@ -365,12 +375,16 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     const wrap = options?.wrap ?? true;
     if (focusPane === 'clusters') {
       if (snapshot.clusters.length === 0) return;
-      const currentIndex = Math.max(0, selectedClusterId === null ? -1 : (clusterIndexById.get(selectedClusterId) ?? -1));
+      const currentIndex = Math.max(
+        CLUSTER_LIST_FIRST_ITEM_INDEX,
+        selectedClusterId === null ? CLUSTER_LIST_FIRST_ITEM_INDEX : (clusterIndexById.get(selectedClusterId) ?? CLUSTER_LIST_FIRST_ITEM_INDEX),
+      );
       let nextIndex = currentIndex + delta * steps;
       if (wrap) {
-        nextIndex = ((nextIndex % snapshot.clusters.length) + snapshot.clusters.length) % snapshot.clusters.length;
+        const relativeIndex = nextIndex - CLUSTER_LIST_FIRST_ITEM_INDEX;
+        nextIndex = ((relativeIndex % snapshot.clusters.length) + snapshot.clusters.length) % snapshot.clusters.length + CLUSTER_LIST_FIRST_ITEM_INDEX;
       } else {
-        nextIndex = Math.max(0, Math.min(snapshot.clusters.length - 1, nextIndex));
+        nextIndex = Math.max(CLUSTER_LIST_FIRST_ITEM_INDEX, Math.min(snapshot.clusters.length, nextIndex));
       }
       selectClusterIndex(nextIndex);
       return;
@@ -403,10 +417,34 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     moveSelection(delta, { steps: getFocusedListPageSize(), wrap: false });
   };
 
+  const setSortMode = (nextSortMode: TuiClusterSortMode): void => {
+    if (sortMode === nextSortMode) {
+      return;
+    }
+    sortMode = nextSortMode;
+    persistRepositoryPreference();
+    status = `Sort: ${sortMode}`;
+    refreshAll(true);
+  };
+
+  const toggleSortMode = (): void => {
+    setSortMode(cycleSortMode(sortMode));
+  };
+
+  const toggleClosedVisibility = (): void => {
+    showClosed = !showClosed;
+    status = showClosed ? 'Showing closed clusters and members' : 'Hiding closed clusters and members';
+    refreshAll(true);
+  };
+
   const selectClusterIndex = (nextIndex: number): void => {
     if (!snapshot || snapshot.clusters.length === 0) return;
-    const boundedIndex = Math.max(0, Math.min(snapshot.clusters.length - 1, nextIndex));
-    selectedClusterId = snapshot.clusters[boundedIndex]?.clusterId ?? null;
+    if (nextIndex === CLUSTER_LIST_HEADER_INDEX) {
+      toggleSortMode();
+      return;
+    }
+    const snapshotIndex = Math.max(0, Math.min(snapshot.clusters.length - 1, nextIndex - CLUSTER_LIST_FIRST_ITEM_INDEX));
+    selectedClusterId = snapshot.clusters[snapshotIndex]?.clusterId ?? null;
     if (selectedClusterId !== null) {
       try {
         clusterDetail = loadClusterDetail(selectedClusterId);
@@ -426,8 +464,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     }
     status =
       selectedClusterId !== null
-        ? `Cluster ${selectedClusterId} (${boundedIndex + 1}/${snapshot.clusters.length})`
-        : `Cluster ${boundedIndex + 1}/${snapshot.clusters.length}`;
+        ? `Cluster ${selectedClusterId} (${snapshotIndex + 1}/${snapshot.clusters.length})`
+        : `Cluster ${snapshotIndex + 1}/${snapshot.clusters.length}`;
     render();
   };
 
@@ -535,13 +573,12 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     render();
   };
 
-  const openThreadContextMenu = (event?: MouseEventArg): void => {
-    if (modalOpen || !threadDetail) {
+  const openContextMenu = (label: string, items: ContextMenuItem[], event?: MouseEventArg): void => {
+    if (modalOpen || items.length === 0) {
       return;
     }
     modalOpen = true;
-    const items = buildThreadContextMenuItems(threadDetail);
-    const width = 30;
+    const width = Math.max(26, Math.min(42, Math.max(...items.map((item) => item.label.length)) + 4));
     const height = items.length + 2;
     const screenWidth = Number(widgets.screen.width);
     const screenHeight = Number(widgets.screen.height);
@@ -550,7 +587,6 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     const menu = blessed.list({
       parent: widgets.screen,
       border: 'line',
-      label: ' Thread ',
       top,
       left,
       width,
@@ -558,6 +594,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       tags: true,
       keys: true,
       mouse: true,
+      label: ` ${label} `,
       items: items.map((item) => item.label),
       style: {
         border: { fg: '#fde74c' },
@@ -572,35 +609,91 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       modalOpen = false;
       render();
     };
-    const runAction = (action: ThreadContextAction): void => {
-      const selectedThread = threadDetail?.thread;
-      if (!selectedThread) {
-        closeMenu();
-        return;
-      }
-      if (action === 'open') {
-        openUrl(selectedThread.htmlUrl);
-        status = `Opened ${selectedThread.htmlUrl}`;
-      } else if (action === 'copy-url') {
-        status = copyTextToClipboard(selectedThread.htmlUrl) ? 'Copied URL' : 'Clipboard copy failed';
-      } else if (action === 'copy-title') {
-        status = copyTextToClipboard(`#${selectedThread.number} ${selectedThread.title}`) ? 'Copied title' : 'Clipboard copy failed';
-      } else if (action === 'copy-markdown-link') {
-        const markdownLink = `[#${selectedThread.number} ${selectedThread.title}](${selectedThread.htmlUrl})`;
-        status = copyTextToClipboard(markdownLink) ? 'Copied markdown link' : 'Clipboard copy failed';
-      } else if (action === 'load-neighbors') {
-        loadSelectedThreadDetail(true);
-        status = `Loaded neighbors for #${threadDetail?.thread.number ?? selectedThread.number}`;
-        focusPane = 'detail';
-      }
-      closeMenu();
-    };
-
     menu.key(['escape', 'q'], closeMenu);
-    menu.on('select', (_item, index) => runAction(items[Number(index)]?.action ?? 'close'));
+    menu.on('select', (_item, index) => {
+      const item = items[Number(index)];
+      closeMenu();
+      const shouldRender = item?.run();
+      if (shouldRender !== false) {
+        render();
+      }
+    });
     menu.focus();
     widgets.screen.render();
   };
+
+  const threadContextItems = (): ContextMenuItem[] => {
+    const selectedThread = threadDetail?.thread;
+    if (!selectedThread) {
+      return [{ label: 'Close', run: () => undefined }];
+    }
+    return buildThreadContextMenuItems(threadDetail).map((item) => ({
+      label: item.label,
+      run: () => {
+        if (item.action === 'open') {
+          openUrl(selectedThread.htmlUrl);
+          status = `Opened ${selectedThread.htmlUrl}`;
+        } else if (item.action === 'copy-url') {
+          status = copyTextToClipboard(selectedThread.htmlUrl) ? 'Copied URL' : 'Clipboard copy failed';
+        } else if (item.action === 'copy-title') {
+          status = copyTextToClipboard(`#${selectedThread.number} ${selectedThread.title}`) ? 'Copied title' : 'Clipboard copy failed';
+        } else if (item.action === 'copy-markdown-link') {
+          const markdownLink = `[#${selectedThread.number} ${selectedThread.title}](${selectedThread.htmlUrl})`;
+          status = copyTextToClipboard(markdownLink) ? 'Copied markdown link' : 'Clipboard copy failed';
+        } else if (item.action === 'load-neighbors') {
+          loadSelectedThreadDetail(true);
+          status = `Loaded neighbors for #${threadDetail?.thread.number ?? selectedThread.number}`;
+          focusPane = 'detail';
+        }
+      },
+    }));
+  };
+
+  const clusterContextItems = (): ContextMenuItem[] => {
+    const selectedCluster = clusterDetail;
+    const title = selectedCluster ? splitClusterDisplayTitle(selectedCluster.displayTitle) : null;
+    return [
+      ...(selectedCluster
+        ? [
+            { label: 'Focus members', run: () => updateFocus('members') },
+            {
+              label: 'Copy cluster id',
+              run: () => {
+                status = copyTextToClipboard(String(selectedCluster.clusterId)) ? `Copied cluster ${selectedCluster.clusterId}` : 'Clipboard copy failed';
+              },
+            },
+            {
+              label: 'Copy cluster title',
+              run: () => {
+                status = copyTextToClipboard(title?.title ?? selectedCluster.displayTitle) ? 'Copied cluster title' : 'Clipboard copy failed';
+              },
+            },
+          ]
+        : []),
+      { label: 'Sort by size', run: () => setSortMode('size') },
+      { label: 'Sort by recent', run: () => setSortMode('recent') },
+      { label: showClosed ? 'Hide closed' : 'Show closed', run: () => toggleClosedVisibility() },
+      { label: 'Filter clusters', run: promptFilter },
+      { label: 'Refresh', run: () => refreshAll(true) },
+      { label: 'Help', run: openHelp },
+    ];
+  };
+
+  const globalContextItems = (): ContextMenuItem[] => [
+    { label: 'Refresh', run: () => refreshAll(true) },
+    { label: 'Repository browser', run: browseRepositories },
+    { label: 'Sort by size', run: () => setSortMode('size') },
+    { label: 'Sort by recent', run: () => setSortMode('recent') },
+    { label: showClosed ? 'Hide closed' : 'Show closed', run: () => toggleClosedVisibility() },
+    { label: 'Help', run: openHelp },
+    {
+      label: 'Quit',
+      run: () => {
+        requestQuit();
+        return false;
+      },
+    },
+  ];
 
   const openHelp = (): void => {
     if (modalOpen) return;
@@ -844,10 +937,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   });
   widgets.screen.key(['s'], () => {
     if (modalOpen) return;
-    sortMode = cycleSortMode(sortMode);
-    persistRepositoryPreference();
-    status = `Sort: ${sortMode}`;
-    refreshAll(false);
+    toggleSortMode();
   });
   widgets.screen.key(['f'], () => {
     if (modalOpen) return;
@@ -865,9 +955,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   });
   widgets.screen.key(['x'], () => {
     if (modalOpen) return;
-    showClosed = !showClosed;
-    status = showClosed ? 'Showing closed clusters and members' : 'Hiding closed clusters and members';
-    refreshAll(true);
+    toggleClosedVisibility();
   });
   widgets.screen.key(['/'], () => {
     if (modalOpen) return;
@@ -893,6 +981,10 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   });
   widgets.clusters.on('select item', (_item, index) => {
     if (isRendering || modalOpen) return;
+    if (suppressNextClusterSelect) {
+      suppressNextClusterSelect = false;
+      return;
+    }
     focusPane = 'clusters';
     widgets.clusters.focus();
     selectClusterIndex(Number(index));
@@ -900,6 +992,25 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   widgets.clusters.on('select', () => {
     if (isRendering || modalOpen) return;
     updateFocus('members');
+  });
+  widgets.clusters.on('mousedown', (event: MouseEventArg) => {
+    if (isRendering || modalOpen) return;
+    const itemIndex = getListItemIndexFromMouse(widgets.clusters, event);
+    if (event.button === 'left' && itemIndex === CLUSTER_LIST_HEADER_INDEX) {
+      suppressNextClusterSelect = true;
+      const relativeX = Number(event.x) - Number(widgets.clusters.aleft) - 2;
+      setSortMode(relativeX <= 5 ? 'size' : relativeX >= 88 ? 'recent' : cycleSortMode(sortMode));
+      return;
+    }
+    if (event.button !== 'right') return;
+    focusPane = 'clusters';
+    widgets.clusters.focus();
+    if (itemIndex !== null && itemIndex >= CLUSTER_LIST_FIRST_ITEM_INDEX) {
+      selectClusterIndex(itemIndex);
+    } else {
+      render();
+    }
+    openContextMenu('Cluster', clusterContextItems(), event);
   });
   widgets.members.on('select item', (_item, index) => {
     if (isRendering || modalOpen) return;
@@ -917,17 +1028,16 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     if (isRendering || modalOpen || event.button !== 'right') return;
     focusPane = 'members';
     widgets.members.focus();
-    const itemIndex = Number(event.y) - Number(widgets.members.atop) - 2 + Number(widgets.members.getScroll());
-    const row = Number.isInteger(itemIndex) && itemIndex >= 0 && itemIndex < memberRows.length ? memberRows[itemIndex] : null;
+    const itemIndex = getListItemIndexFromMouse(widgets.members, event);
+    const row = itemIndex !== null && itemIndex >= 0 && itemIndex < memberRows.length ? memberRows[itemIndex] : null;
     if (!row?.selectable) {
-      status = 'Right-click a thread row';
-      render();
+      openContextMenu('Members', clusterContextItems(), event);
       return;
     }
     if (row.threadId !== selectedMemberThreadId) {
-      selectMemberIndex(itemIndex);
+      selectMemberIndex(itemIndex ?? 0);
     }
-    openThreadContextMenu(event);
+    openContextMenu('Thread', threadContextItems(), event);
   });
   widgets.detail.on('click', () => {
     if (modalOpen) return;
@@ -936,7 +1046,15 @@ export async function startTui(params: StartTuiParams): Promise<void> {
   widgets.detail.on('mousedown', (event: MouseEventArg) => {
     if (modalOpen || event.button !== 'right') return;
     updateFocus('detail');
-    openThreadContextMenu(event);
+    openContextMenu(threadDetail ? 'Thread' : clusterDetail ? 'Cluster' : 'ghcrawl', threadDetail ? threadContextItems() : clusterDetail ? clusterContextItems() : globalContextItems(), event);
+  });
+  widgets.header.on('mousedown', (event: MouseEventArg) => {
+    if (modalOpen || event.button !== 'right') return;
+    openContextMenu('ghcrawl', globalContextItems(), event);
+  });
+  widgets.footer.on('mousedown', (event: MouseEventArg) => {
+    if (modalOpen || event.button !== 'right') return;
+    openContextMenu('ghcrawl', globalContextItems(), event);
   });
   widgets.screen.on('resize', () => render());
 
@@ -973,6 +1091,7 @@ function createWidgets(owner: string, repo: string): Widgets {
   const header = blessed.box({
     parent: screen,
     tags: true,
+    mouse: true,
     style: { fg: 'white', bg: '#0d1321' },
   });
   const clusters = blessed.list({
@@ -1021,6 +1140,7 @@ function createWidgets(owner: string, repo: string): Widgets {
   const footer = blessed.box({
     parent: screen,
     tags: false,
+    mouse: true,
     style: { fg: 'black', bg: '#5bc0eb' },
   });
 
@@ -1044,9 +1164,20 @@ export function renderDetailPane(
   threadDetail: TuiThreadDetail | null,
   clusterDetail: TuiClusterDetail | null,
   focusPane: TuiFocusPane,
+  snapshot?: TuiSnapshot | null,
 ): string {
   if (!clusterDetail) {
-    return 'No cluster selected.\n\nRun `ghcrawl cluster owner/repo` if you have not clustered this repository yet.';
+    const repoLabel = snapshot?.repository.fullName ?? 'No repository selected';
+    const clusterCount = snapshot?.clusters.length ?? 0;
+    return [
+      `{bold}${escapeBlessedText(repoLabel)}{/bold}`,
+      '',
+      clusterCount > 0 ? `${clusterCount} clusters loaded. Click a cluster or press Enter to inspect members.` : 'No clusters visible in this view.',
+      '',
+      `{bold}Controls{/bold}`,
+      's sort  f min size  / filter  x closed  r refresh',
+      'right-click any pane for actions',
+    ].join('\n');
   }
   const clusterTitle = splitClusterDisplayTitle(clusterDetail.displayTitle);
   if (!threadDetail) {
@@ -1225,6 +1356,11 @@ function applyRect(element: blessed.Widgets.BoxElement | blessed.Widgets.ListEle
   element.height = rect.height;
 }
 
+function getListItemIndexFromMouse(list: blessed.Widgets.ListElement, event: MouseEventArg): number | null {
+  const itemIndex = Number(event.y) - Number(list.atop) - 2 + Number(list.getScroll());
+  return Number.isInteger(itemIndex) ? itemIndex : null;
+}
+
 function openUrl(url: string): void {
   const launch =
     process.platform === 'darwin'
@@ -1263,7 +1399,7 @@ export function buildHelpContent(): string {
     'Left / Right      cycle focus backward or forward across panes',
     'Up / Down         move selection, or scroll detail when detail is focused',
     'Enter             clusters -> members, members -> detail',
-    'Mouse             click to focus/select; right-click threads for actions; wheel scrolls lists and detail',
+    'Mouse             click to focus/select; click cluster header to sort; right-click opens pane actions; wheel scrolls',
     'PgUp / PgDn       page through the focused pane or this help popup faster',
     'Home / End        jump to the top or bottom of detail or help',
     '',
@@ -1289,7 +1425,7 @@ export function buildHelpContent(): string {
     'The TUI only reads local SQLite. Run ghcrawl sync, ghcrawl embed, and ghcrawl cluster from the shell to update data.',
     'The default cluster filter is 1+, so solo clusters are visible unless you raise it with f.',
     'The default sort is size. Press s to toggle size and recent.',
-    'Mouse clicks focus panes; clicking an already selected row advances to the next pane.',
+    'Mouse clicks focus panes; clicking an already selected row advances to the next pane. Right-click works on every pane.',
     'Clusters show C<clusterId> so the cluster id is easy to copy into CLI or skill flows.',
     'The footer only shows the short command list. Open help to see the full list.',
     'This popup scrolls. Use arrows, PgUp/PgDn, Home, and End if it does not fit.',
@@ -1503,6 +1639,12 @@ export function formatClusterListLabel(cluster: TuiClusterSummary): string {
   const updated = formatRelativeTime(cluster.latestUpdatedAt).padStart(8);
   const title = splitClusterDisplayTitle(cluster.displayTitle);
   return `${countLabel}  ${title.name.padEnd(22).slice(0, 22)}  ${title.title.padEnd(56).slice(0, 56)}  ${mixLabel}  ${updated}`;
+}
+
+export function formatClusterListHeader(sortMode: TuiClusterSortMode): string {
+  const countLabel = (sortMode === 'size' ? 'cnt↓' : 'cnt').padStart(3);
+  const updated = (sortMode === 'recent' ? 'updated↓' : 'updated').padStart(8);
+  return `${countLabel}  ${'cluster'.padEnd(22)}  ${'title'.padEnd(56)}  ${'mix'.padStart(7)}  ${updated}`;
 }
 
 export function formatClusterShortName(title: string, maxWords = 3): string {

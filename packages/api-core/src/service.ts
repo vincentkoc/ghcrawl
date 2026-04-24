@@ -54,6 +54,7 @@ import {
 } from '@ghcrawl/api-contract';
 
 import { buildClusters, buildRefinedClusters, buildSizeBoundedClusters } from './cluster/build.js';
+import { buildCodeSnapshotSignature } from './cluster/code-signature.js';
 import { buildDeterministicClusterGraph } from './cluster/deterministic-engine.js';
 import { buildSourceKindEdges } from './cluster/exact-edges.js';
 import { humanKeyForValue } from './cluster/human-key.js';
@@ -68,6 +69,7 @@ import {
   upsertSimilarityEdgeEvidence,
   upsertThreadFingerprint,
   upsertThreadRevision,
+  upsertThreadCodeSnapshot,
 } from './cluster/persistent-store.js';
 import type { DeterministicThreadFingerprint } from './cluster/thread-fingerprint.js';
 import {
@@ -252,6 +254,7 @@ type SyncCursorState = {
 type SyncRunStats = {
   threadsSynced: number;
   commentsSynced: number;
+  codeFilesSynced: number;
   threadsClosed: number;
   threadsClosedFromClosedSweep?: number;
   threadsClosedFromDirectReconcile?: number;
@@ -260,6 +263,7 @@ type SyncRunStats = {
   effectiveSince: string | null;
   limit: number | null;
   includeComments: boolean;
+  includeCode?: boolean;
   fullReconcile?: boolean;
   isFullOpenScan: boolean;
   isOverlappingOpenScan: boolean;
@@ -366,6 +370,7 @@ type SyncOptions = {
   since?: string;
   limit?: number;
   includeComments?: boolean;
+  includeCode?: boolean;
   fullReconcile?: boolean;
   onProgress?: (message: string) => void;
   startedAt?: string;
@@ -456,6 +461,8 @@ function parseSyncRunStats(statsJson: string | null): SyncRunStats | null {
       effectiveSince: typeof parsed.effectiveSince === 'string' ? parsed.effectiveSince : null,
       limit: typeof parsed.limit === 'number' ? parsed.limit : null,
       includeComments: parsed.includeComments === true,
+      codeFilesSynced: typeof parsed.codeFilesSynced === 'number' ? parsed.codeFilesSynced : 0,
+      includeCode: parsed.includeCode === true,
       isFullOpenScan: parsed.isFullOpenScan === true,
       isOverlappingOpenScan: parsed.isOverlappingOpenScan === true,
       overlapReferenceAt: typeof parsed.overlapReferenceAt === 'string' ? parsed.overlapReferenceAt : null,
@@ -975,6 +982,7 @@ export class GHCrawlService {
   ): Promise<SyncResultDto> {
     const crawlStartedAt = params.startedAt ?? nowIso();
     const includeComments = params.includeComments ?? false;
+    const includeCode = params.includeCode ?? false;
     const github = this.requireGithub();
     params.onProgress?.(`[sync] fetching repository metadata for ${params.owner}/${params.repo}`);
     const reporter = params.onProgress ? (message: string) => params.onProgress?.(message.replace(/^\[github\]/, '[sync/github]')) : undefined;
@@ -1000,6 +1008,11 @@ export class GHCrawlService {
           ? '[sync] comment hydration enabled; fetching issue comments, reviews, and review comments'
           : '[sync] metadata-only mode; skipping comment, review, and review-comment fetches',
       );
+      params.onProgress?.(
+        includeCode
+          ? '[sync] code hydration enabled; fetching pull request file metadata and patch signatures'
+          : '[sync] code hydration disabled; skipping pull request file fetches',
+      );
       if (isFullOpenScan) {
         params.onProgress?.('[sync] full open scan; no prior completed overlap/full cursor was found for this repository');
       } else if (params.since === undefined && effectiveSince && overlapReferenceAt) {
@@ -1013,6 +1026,7 @@ export class GHCrawlService {
       params.onProgress?.(`[sync] discovered ${items.length} threads to process`);
       let threadsSynced = 0;
       let commentsSynced = 0;
+      let codeFilesSynced = 0;
 
       for (const [index, item] of items.entries()) {
         if (index > 0 && index % SYNC_BATCH_SIZE === 0) {
@@ -1026,6 +1040,11 @@ export class GHCrawlService {
         try {
           const threadPayload = isPr ? await github.getPull(params.owner, params.repo, number, reporter) : item;
           const threadId = this.upsertThread(repoId, kind, threadPayload, crawlStartedAt);
+          if (includeCode && isPr) {
+            const files = await github.listPullFiles(params.owner, params.repo, number, reporter);
+            this.persistThreadCodeSnapshot(threadId, threadPayload, files);
+            codeFilesSynced += files.length;
+          }
           if (includeComments) {
             const comments = await this.fetchThreadComments(params.owner, params.repo, number, isPr, reporter);
             this.replaceComments(threadId, comments);
@@ -1090,12 +1109,14 @@ export class GHCrawlService {
       this.finishRun('sync_runs', runId, 'completed', {
         threadsSynced,
         commentsSynced,
+        codeFilesSynced,
         threadsClosed,
         crawlStartedAt,
         requestedSince: params.since ?? null,
         effectiveSince: effectiveSince ?? null,
         limit: params.limit ?? null,
         includeComments,
+        includeCode,
         fullReconcile: params.fullReconcile ?? false,
         isFullOpenScan,
         isOverlappingOpenScan,
@@ -1104,7 +1125,7 @@ export class GHCrawlService {
         threadsClosedFromDirectReconcile,
         reconciledOpenCloseAt,
       } satisfies SyncRunStats, undefined, finishedAt);
-      return syncResultSchema.parse({ runId, threadsSynced, commentsSynced, threadsClosed });
+      return syncResultSchema.parse({ runId, threadsSynced, commentsSynced, codeFilesSynced, threadsClosed });
     } catch (error) {
       this.finishRun('sync_runs', runId, 'failed', null, error);
       throw error;
@@ -3437,6 +3458,27 @@ export class GHCrawlService {
       .prepare('select id from threads where repo_id = ? and kind = ? and number = ?')
       .get(repoId, kind, Number(payload.number)) as { id: number };
     return row.id;
+  }
+
+  private persistThreadCodeSnapshot(threadId: number, threadPayload: Record<string, unknown>, files: Array<Record<string, unknown>>): void {
+    const title = String(threadPayload.title ?? `#${threadPayload.number}`);
+    const body = typeof threadPayload.body === 'string' ? threadPayload.body : null;
+    const revisionId = upsertThreadRevision(this.db, {
+      threadId,
+      sourceUpdatedAt: typeof threadPayload.updated_at === 'string' ? threadPayload.updated_at : null,
+      title,
+      body,
+      labels: parseLabels(threadPayload),
+      rawJson: asJson(threadPayload),
+    });
+    const base = threadPayload.base as Record<string, unknown> | undefined;
+    const head = threadPayload.head as Record<string, unknown> | undefined;
+    upsertThreadCodeSnapshot(this.db, {
+      threadRevisionId: revisionId,
+      baseSha: typeof base?.sha === 'string' ? base.sha : null,
+      headSha: typeof head?.sha === 'string' ? head.sha : null,
+      signature: buildCodeSnapshotSignature(files),
+    });
   }
 
   private async applyClosedOverlapSweep(params: {

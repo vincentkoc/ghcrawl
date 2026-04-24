@@ -162,6 +162,7 @@ test('syncRepository defaults to metadata-only mode, preserves thread kind, and 
   let listIssueCommentCalls = 0;
   let listPullReviewCalls = 0;
   let listPullReviewCommentCalls = 0;
+  let listPullFileCalls = 0;
   const service = makeTestService({
     checkAuth: async () => undefined,
     getRepo: async () => ({ id: 1, full_name: 'openclaw/openclaw' }),
@@ -236,7 +237,10 @@ test('syncRepository defaults to metadata-only mode, preserves thread kind, and 
       listPullReviewCommentCalls += 1;
       return [];
     },
-    listPullFiles: async () => [],
+    listPullFiles: async () => {
+      listPullFileCalls += 1;
+      return [];
+    },
   });
 
   try {
@@ -266,6 +270,7 @@ test('syncRepository defaults to metadata-only mode, preserves thread kind, and 
     assert.equal(listIssueCommentCalls, 0);
     assert.equal(listPullReviewCalls, 0);
     assert.equal(listPullReviewCommentCalls, 0);
+    assert.equal(listPullFileCalls, 0);
 
     const rows = service.db
       .prepare('select number, kind, first_pulled_at, last_pulled_at from threads order by number asc')
@@ -385,6 +390,85 @@ test('syncRepository fetches comments, reviews, and review comments when include
 
     const commentCount = service.db.prepare('select count(*) as count from comments').get() as { count: number };
     assert.equal(commentCount.count, 3);
+  } finally {
+    service.close();
+  }
+});
+
+test('syncRepository hydrates pull request code snapshots when includeCode is enabled', async () => {
+  let listPullFileCalls = 0;
+  const service = makeTestService({
+    checkAuth: async () => undefined,
+    getRepo: async () => ({ id: 1, full_name: 'openclaw/openclaw' }),
+    listRepositoryIssues: async () => [
+      {
+        id: 101,
+        number: 43,
+        state: 'open',
+        title: 'Downloader PR',
+        body: 'Implements a fix.',
+        html_url: 'https://github.com/openclaw/openclaw/pull/43',
+        labels: [{ name: 'bug' }],
+        assignees: [],
+        pull_request: { url: 'https://api.github.com/repos/openclaw/openclaw/pulls/43' },
+        user: { login: 'alice', type: 'User' },
+      },
+    ],
+    getIssue: async () => {
+      throw new Error('not expected');
+    },
+    getPull: async (_owner, _repo, number) => ({
+      id: 101,
+      number,
+      state: 'open',
+      title: 'Downloader PR',
+      body: 'Implements a fix.',
+      html_url: `https://github.com/openclaw/openclaw/pull/${number}`,
+      labels: [{ name: 'bug' }],
+      assignees: [],
+      user: { login: 'alice', type: 'User' },
+      draft: false,
+      base: { sha: 'base-sha' },
+      head: { sha: 'head-sha' },
+      updated_at: '2026-03-09T00:00:00Z',
+    }),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+    listPullFiles: async () => {
+      listPullFileCalls += 1;
+      return [
+        {
+          filename: 'packages/api-core/src/service.ts',
+          status: 'modified',
+          additions: 1,
+          deletions: 1,
+          changes: 2,
+          patch: '@@ -1 +1 @@\n-old\n+new',
+        },
+      ];
+    },
+  });
+
+  try {
+    const result = await service.syncRepository({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      includeCode: true,
+    });
+
+    assert.equal(result.codeFilesSynced, 1);
+    assert.equal(listPullFileCalls, 1);
+    const snapshot = service.db.prepare('select base_sha, head_sha, files_changed from thread_code_snapshots').get() as {
+      base_sha: string;
+      head_sha: string;
+      files_changed: number;
+    };
+    const file = service.db.prepare('select path from thread_changed_files').get() as { path: string };
+    const hunkCount = service.db.prepare('select count(*) as count from thread_hunk_signatures').get() as { count: number };
+    assert.deepEqual(snapshot, { base_sha: 'base-sha', head_sha: 'head-sha', files_changed: 1 });
+    assert.equal(file.path, 'packages/api-core/src/service.ts');
+    assert.equal(hunkCount.count, 1);
   } finally {
     service.close();
   }

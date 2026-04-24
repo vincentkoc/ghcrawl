@@ -646,6 +646,18 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     render();
   };
 
+  const runLocalMutation = (action: () => { message?: string }): void => {
+    try {
+      const result = action();
+      status = result.message ?? 'Updated local state';
+      clearCaches();
+      refreshAll(true);
+    } catch (error) {
+      status = formatTuiError(error);
+      render();
+    }
+  };
+
   const openContextMenu = (label: string, items: ContextMenuItem[], event?: MouseEventArg): void => {
     if (modalOpen || items.length === 0) {
       return;
@@ -737,6 +749,43 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       },
       })),
       ...detailCopyContextItems(),
+      {
+        label: 'Close thread locally',
+        run: () =>
+          runLocalMutation(() =>
+            params.service.closeThreadLocally({
+              owner: currentRepository.owner,
+              repo: currentRepository.repo,
+              threadNumber: selectedThread.number,
+            }),
+          ),
+      },
+      {
+        label: 'Remove from durable cluster',
+        run: () =>
+          runLocalMutation(() =>
+            params.service.excludeThreadFromCluster({
+              owner: currentRepository.owner,
+              repo: currentRepository.repo,
+              clusterId: clusterDetail?.clusterId ?? selectedThread.clusterId ?? 0,
+              threadNumber: selectedThread.number,
+              reason: 'TUI manual remove',
+            }),
+          ),
+      },
+      {
+        label: 'Set as durable canonical',
+        run: () =>
+          runLocalMutation(() =>
+            params.service.setClusterCanonicalThread({
+              owner: currentRepository.owner,
+              repo: currentRepository.repo,
+              clusterId: clusterDetail?.clusterId ?? selectedThread.clusterId ?? 0,
+              threadNumber: selectedThread.number,
+              reason: 'TUI manual canonical',
+            }),
+          ),
+      },
     ];
   };
 
@@ -843,6 +892,21 @@ export async function startTui(params: StartTuiParams): Promise<void> {
               run: () => {
                 status = copyTextToClipboard(title?.title ?? selectedCluster.displayTitle) ? 'Copied cluster title' : 'Clipboard copy failed';
               },
+            },
+          ]
+        : []),
+      ...(selectedCluster
+        ? [
+            {
+              label: 'Close cluster locally',
+              run: () =>
+                runLocalMutation(() =>
+                  params.service.closeClusterLocally({
+                    owner: currentRepository.owner,
+                    repo: currentRepository.repo,
+                    clusterId: selectedCluster.clusterId,
+                  }),
+                ),
             },
           ]
         : []),

@@ -279,12 +279,13 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
   },
   {
     name: 'cluster',
-    synopsis: 'cluster <owner/repo> [--number <thread>] [--k <count>] [--threshold <score>] [--heap-snapshot-dir <dir>] [--heap-log-interval-ms <ms>] [--json]',
+    synopsis: 'cluster <owner/repo> [--number <thread>] [--k <count>] [--threshold <score>] [--max-cluster-size <count>] [--heap-snapshot-dir <dir>] [--heap-log-interval-ms <ms>] [--json]',
     description: 'Build or refresh local similarity clusters.',
     options: [
       '--number <thread>  Refresh only one durable cluster neighborhood',
       '--k <count>  Limit nearest-neighbor fanout',
       '--threshold <score>  Minimum similarity score',
+      '--max-cluster-size <count>  Soft cap for automatic cluster components before starting a new component',
       '--heap-snapshot-dir <dir>  Write heap snapshots during long-running work',
       '--heap-log-interval-ms <ms>  Emit periodic heap diagnostics',
       '--json  Emit machine-readable JSON output explicitly',
@@ -1249,6 +1250,10 @@ export async function run(
             threadNumber: typeof values.number === 'string' ? parsePositiveInteger('number', values.number, 'cluster') : undefined,
             k: typeof values.k === 'string' ? parsePositiveInteger('k', values.k, 'cluster') : undefined,
             minScore: typeof values.threshold === 'string' ? parseFiniteNumber('threshold', values.threshold, 'cluster') : undefined,
+            maxClusterSize:
+              typeof values['max-cluster-size'] === 'string'
+                ? parsePositiveInteger('max-cluster-size', values['max-cluster-size'], 'cluster')
+                : undefined,
             onProgress:
               heapDiagnostics?.wrapProgress((message: string) => writeProgress(message, stderr)) ??
               ((message: string) => writeProgress(message, stderr)),

@@ -113,11 +113,12 @@ test('formatClusterListLabel keeps counts first and adds a short cluster name', 
     searchText: 'fix dedupe section',
   });
 
-  assert.match(label, /3 items\s+C1507\s+3P\/0I\s+04-24 07:29\s+Fix: dedupe section/);
+  assert.match(label, /3 items\s+dedupe section title\/des\s+C1507\s+3P\/0I\s+04-24 07:29/);
 });
 
 test('formatClusterShortName returns the first meaningful words', () => {
-  assert.equal(formatClusterShortName('[codex] fix agent session-id routing'), 'codex fix agent');
+  assert.equal(formatClusterShortName('[codex] fix agent session-id routing'), 'agent session-id routing');
+  assert.equal(formatClusterShortName('fix(agents): exclude volatile inbound metadata'), 'agents exclude volatile');
   assert.equal(formatClusterShortName(''), 'untitled');
 });
 

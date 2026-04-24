@@ -409,6 +409,7 @@ const SUMMARY_PROMPT_VERSION = 'v1';
 const ACTIVE_EMBED_DIMENSIONS = 1024;
 const ACTIVE_EMBED_PIPELINE_VERSION = 'vectorlite-1024-v1';
 const DEFAULT_CLUSTER_MIN_SCORE = 0.78;
+const DEFAULT_CLUSTER_MAX_SIZE = 24;
 const VECTORLITE_CLUSTER_EXPANDED_K = 24;
 const VECTORLITE_CLUSTER_EXPANDED_MULTIPLIER = 4;
 const VECTORLITE_CLUSTER_EXPANDED_CANDIDATE_K = 512;
@@ -1930,6 +1931,7 @@ export class GHCrawlService {
     repo: string;
     threadNumber?: number;
     minScore?: number;
+    maxClusterSize?: number;
     k?: number;
     onProgress?: (message: string) => void;
   }): Promise<ClusterResultDto> {
@@ -1944,6 +1946,8 @@ export class GHCrawlService {
         JSON.stringify({
           threadNumber: params.threadNumber ?? null,
           minScore: params.minScore ?? DEFAULT_CLUSTER_MIN_SCORE,
+          maxClusterSize: params.maxClusterSize ?? DEFAULT_CLUSTER_MAX_SIZE,
+          clusterMode: 'size_bounded',
           k: params.k ?? 6,
           embedModel: this.config.embedModel,
           embeddingBasis: this.config.embeddingBasis,
@@ -1951,6 +1955,7 @@ export class GHCrawlService {
       ),
     });
     const minScore = params.minScore ?? DEFAULT_CLUSTER_MIN_SCORE;
+    const maxClusterSize = params.maxClusterSize ?? DEFAULT_CLUSTER_MAX_SIZE;
     const k = params.k ?? 6;
 
     try {
@@ -2070,9 +2075,10 @@ export class GHCrawlService {
         }
       }
       const clusterItems = seedThreadIds ? deterministicItems.filter((item) => involvedIds.has(item.id)) : deterministicItems;
-      const clusters = buildClusters(
+      const clusters = buildSizeBoundedClusters(
         clusterItems.map((item) => ({ threadId: item.id, number: item.number, title: item.title })),
         edges,
+        { maxClusterSize },
       );
       if (!seedThreadIds) {
         this.persistClusterRun(repository.id, runId, aggregatedEdges, clusters);

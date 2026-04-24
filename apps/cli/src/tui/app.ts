@@ -1279,7 +1279,7 @@ export function formatClusterListLabel(cluster: TuiClusterSummary): string {
   const countLabel = `${cluster.totalCount} ${cluster.totalCount === 1 ? 'item' : 'items'}`.padStart(7);
   const mixLabel = `${cluster.pullRequestCount}P/${cluster.issueCount}I`.padStart(6);
   const updated = formatClusterDateColumn(cluster.latestUpdatedAt);
-  return `${countLabel}  C${cluster.clusterId}  ${mixLabel}  ${updated}  ${formatClusterShortName(cluster.displayTitle)}`;
+  return `${countLabel}  ${formatClusterShortName(cluster.displayTitle).padEnd(24).slice(0, 24)}  C${cluster.clusterId}  ${mixLabel}  ${updated}`;
 }
 
 export function formatClusterShortName(title: string, maxWords = 3): string {
@@ -1287,10 +1287,27 @@ export function formatClusterShortName(title: string, maxWords = 3): string {
     .replace(/[\[\]{}()<>]/g, ' ')
     .split(/\s+/)
     .map((word) => word.trim())
-    .filter(Boolean)
+    .map((word) => word.replace(/^[:/#-]+|[:/#-]+$/g, ''))
+    .filter((word) => word && !CLUSTER_SHORT_NAME_STOPWORDS.has(word.toLowerCase()))
     .slice(0, maxWords);
   return words.join(' ') || 'untitled';
 }
+
+const CLUSTER_SHORT_NAME_STOPWORDS = new Set([
+  'ai',
+  'assisted',
+  'bug',
+  'chore',
+  'codex',
+  'docs',
+  'feat',
+  'feature',
+  'fix',
+  'issue',
+  'pr',
+  'refactor',
+  'test',
+]);
 
 function formatActivityTimestamp(now: Date = new Date()): string {
   return now.toISOString().slice(11, 19);

@@ -77,6 +77,8 @@ export type ThreadContextAction =
   | 'copy-markdown-link'
   | 'open-first-link'
   | 'copy-first-link'
+  | 'open-link-picker'
+  | 'copy-link-picker'
   | 'load-neighbors'
   | 'close';
 
@@ -713,6 +715,10 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         } else if (item.action === 'copy-first-link') {
           const url = getThreadReferenceLinks(threadDetail).at(0);
           status = url ? (copyTextToClipboard(url) ? 'Copied referenced link' : 'Clipboard copy failed') : 'No referenced links found';
+        } else if (item.action === 'open-link-picker') {
+          openLinkPicker('open');
+        } else if (item.action === 'copy-link-picker') {
+          openLinkPicker('copy');
         } else if (item.action === 'load-neighbors') {
           loadSelectedThreadDetail(true);
           status = `Loaded neighbors for #${threadDetail?.thread.number ?? selectedThread.number}`;
@@ -720,6 +726,62 @@ export async function startTui(params: StartTuiParams): Promise<void> {
         }
       },
     }));
+  };
+
+  const openLinkPicker = (mode: 'open' | 'copy'): void => {
+    const links = getThreadReferenceLinks(threadDetail);
+    if (links.length === 0 || modalOpen) {
+      status = 'No referenced links found';
+      render();
+      return;
+    }
+    modalOpen = true;
+    const width = Math.min(92, Math.max(48, Math.max(...links.map((url) => url.length)) + 8));
+    const height = Math.min(Number(widgets.screen.height) - 4, Math.max(5, links.length + 2));
+    const picker = blessed.list({
+      parent: widgets.screen,
+      border: 'line',
+      label: mode === 'open' ? ' Open Link ' : ' Copy Link ',
+      top: 'center',
+      left: 'center',
+      width,
+      height,
+      tags: false,
+      keys: true,
+      vi: true,
+      mouse: true,
+      items: links.map((url, index) => formatLinkChoiceLabel(url, index)),
+      scrollbar: { ch: ' ' },
+      style: {
+        border: { fg: '#fde74c' },
+        selected: { bg: '#f7f7ff', fg: 'black', bold: true },
+        item: { fg: 'white' },
+        bg: '#101522',
+      },
+    });
+
+    const closePicker = (): void => {
+      picker.destroy();
+      modalOpen = false;
+      render();
+    };
+    picker.key(['escape', 'q'], closePicker);
+    picker.on('select', (_item, index) => {
+      const url = links[Number(index)];
+      if (!url) {
+        closePicker();
+        return;
+      }
+      if (mode === 'open') {
+        openUrl(url);
+        status = `Opened ${url}`;
+      } else {
+        status = copyTextToClipboard(url) ? 'Copied referenced link' : 'Clipboard copy failed';
+      }
+      closePicker();
+    });
+    picker.focus();
+    widgets.screen.render();
   };
 
   const clusterContextItems = (): ContextMenuItem[] => {
@@ -1383,6 +1445,10 @@ export function getThreadReferenceLinks(threadDetail: TuiThreadDetail | null): s
   ]).filter((url) => url !== threadDetail.thread.htmlUrl);
 }
 
+export function formatLinkChoiceLabel(url: string, index: number): string {
+  return `${String(index + 1).padStart(2)}  ${url}`;
+}
+
 function extractMarkdownLinks(markdown: string): string[] {
   const urls: string[] = [];
   for (const match of markdown.matchAll(/\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/g)) {
@@ -1494,6 +1560,12 @@ export function buildThreadContextMenuItems(threadDetail: TuiThreadDetail | null
       ? [
           { label: 'Open first body link', action: 'open-first-link' as const },
           { label: 'Copy first body link', action: 'copy-first-link' as const },
+          ...(referenceLinks.length > 1
+            ? [
+                { label: 'Open body link...', action: 'open-link-picker' as const },
+                { label: 'Copy body link...', action: 'copy-link-picker' as const },
+              ]
+            : []),
         ]
       : []),
     { label: 'Load neighbors', action: 'load-neighbors' },

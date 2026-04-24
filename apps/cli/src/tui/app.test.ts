@@ -11,6 +11,7 @@ import {
   formatClusterListHeader,
   formatClusterListLabel,
   formatClusterShortName,
+  formatLinkChoiceLabel,
   getThreadReferenceLinks,
   getRepositoryChoices,
   parseOwnerRepoValue,
@@ -215,7 +216,18 @@ test('buildThreadContextMenuItems exposes thread actions for right-click menus',
 
   assert.deepEqual(
     items.map((item) => item.action),
-    ['open', 'copy-url', 'copy-title', 'copy-markdown-link', 'open-first-link', 'copy-first-link', 'load-neighbors', 'close'],
+    [
+      'open',
+      'copy-url',
+      'copy-title',
+      'copy-markdown-link',
+      'open-first-link',
+      'copy-first-link',
+      'open-link-picker',
+      'copy-link-picker',
+      'load-neighbors',
+      'close',
+    ],
   );
 });
 
@@ -250,6 +262,11 @@ test('getThreadReferenceLinks extracts unique body and summary links', () => {
   });
 
   assert.deepEqual(links, ['https://example.com/run', 'https://example.com/raw', 'https://example.com/summary']);
+});
+
+test('formatLinkChoiceLabel numbers picker rows', () => {
+  assert.equal(formatLinkChoiceLabel('https://example.com/run', 0), ' 1  https://example.com/run');
+  assert.equal(formatLinkChoiceLabel('https://example.com/run', 10), '11  https://example.com/run');
 });
 
 test('getRepositoryChoices sorts by most recent update and includes the new-repo action', () => {

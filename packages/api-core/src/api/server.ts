@@ -121,6 +121,22 @@ export function createApiServer(service: GHCrawlService): http.Server {
         return;
       }
 
+      if (req.method === 'GET' && url.pathname === '/durable-clusters') {
+        const params = parseRepoParams(url);
+        const includeInactive = url.searchParams.get('includeInactive') === 'true';
+        const memberLimitValue = url.searchParams.get('memberLimit');
+        sendJson(
+          res,
+          200,
+          service.listDurableClusters({
+            ...params,
+            includeInactive,
+            memberLimit: memberLimitValue ? Number(memberLimitValue) : undefined,
+          }),
+        );
+        return;
+      }
+
       if (req.method === 'GET' && url.pathname === '/cluster-summaries') {
         const params = parseRepoParams(url);
         const sortParam = url.searchParams.get('sort');

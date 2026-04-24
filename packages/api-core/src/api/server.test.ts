@@ -7,6 +7,7 @@ import {
   clusterDetailResponseSchema,
   clusterOverrideResponseSchema,
   clusterSummariesResponseSchema,
+  durableClustersResponseSchema,
   healthResponseSchema,
   neighborsResponseSchema,
   threadsResponseSchema,
@@ -483,6 +484,72 @@ test('exclude cluster member action records a durable override', async () => {
       reason: string;
     };
     assert.deepEqual(override, { action: 'exclude', reason: 'not the same defect' });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    service.close();
+  }
+});
+
+test('durable clusters endpoint returns stable cluster state', async () => {
+  const service = new GHCrawlService({
+    config: {
+      workspaceRoot: process.cwd(),
+      configDir: '/tmp/ghcrawl-test',
+      configPath: '/tmp/ghcrawl-test/config.json',
+      configFileExists: true,
+      dbPath: ':memory:',
+      dbPathSource: 'config',
+      apiPort: 5179,
+      secretProvider: 'plaintext',
+      githubTokenSource: 'none',
+      openaiApiKeySource: 'none',
+      summaryModel: 'gpt-5-mini',
+      embedModel: 'text-embedding-3-large',
+      embeddingBasis: 'title_original',
+      vectorBackend: 'vectorlite',
+      embedBatchSize: 8,
+      embedConcurrency: 10,
+      embedMaxUnread: 20,
+      openSearchIndex: 'ghcrawl-threads',
+      tuiPreferences: {},
+    },
+    github: {
+      checkAuth: async () => undefined,
+      getRepo: async () => ({}),
+      listRepositoryIssues: async () => [],
+      getIssue: async () => ({}),
+      getPull: async () => ({}),
+      listIssueComments: async () => [],
+      listPullReviews: async () => [],
+      listPullReviewComments: async () => [],
+    },
+  });
+
+  const now = '2026-03-09T00:00:00Z';
+  service.db
+    .prepare(
+      `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+       values (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+  service.db
+    .prepare(
+      `insert into cluster_groups (
+        id, repo_id, stable_key, stable_slug, status, cluster_type, representative_thread_id, title, created_at, updated_at
+      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(7, 1, 'stable-key', 'trace-alpha-river', 'active', 'duplicate_candidate', null, 'Cluster trace-alpha-river', now, now);
+
+  const server = createApiServer(service);
+  try {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert(address && typeof address === 'object');
+
+    const response = await fetch(`http://127.0.0.1:${address.port}/durable-clusters?owner=openclaw&repo=openclaw`);
+    assert.equal(response.status, 200);
+    const payload = durableClustersResponseSchema.parse((await response.json()) as unknown);
+    assert.equal(payload.clusters[0]?.stableSlug, 'trace-alpha-river');
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
     service.close();

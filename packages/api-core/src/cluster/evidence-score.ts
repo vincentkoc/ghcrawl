@@ -70,6 +70,7 @@ export function scoreSimilarityEvidence(
   let tier: EvidenceTier = 'none';
   if (
     base.lineage >= 0.8 ||
+    base.hunkOverlap >= 0.8 ||
     (base.linkedRefOverlap >= 0.8 && (base.structure >= 0.25 || base.titleOverlap >= 0.25)) ||
     score >= config.strongScore
   ) {

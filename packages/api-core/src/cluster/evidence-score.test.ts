@@ -63,6 +63,16 @@ test('scoreSimilarityEvidence can improve confidence with optional enrichment', 
   assert.ok(enriched.score > base.score);
 });
 
+test('scoreSimilarityEvidence treats exact hunk overlap as strong evidence without prose similarity', () => {
+  const left = fp({ id: 1, title: 'Replace queue scheduler', body: 'Internal refactor.', hunks: ['same-hunk'] });
+  const right = fp({ id: 2, title: 'Patch database migrator', body: 'Unrelated words.', hunks: ['same-hunk'] });
+
+  const evidence = scoreSimilarityEvidence(left, right);
+
+  assert.equal(evidence.tier, 'strong');
+  assert.equal(evidence.hunkOverlap, 1);
+});
+
 test('scoreSimilarityEvidence rejects unrelated deterministic fingerprints', () => {
   const left = fp({ id: 1, title: 'Fix cache key collision', files: ['packages/api-core/src/cache.ts'] });
   const right = fp({ id: 2, title: 'Update docs typography', files: ['docs/design.md'] });

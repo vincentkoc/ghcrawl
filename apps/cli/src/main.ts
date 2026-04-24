@@ -28,6 +28,7 @@ type CommandName =
   | 'cluster'
   | 'cluster-experiment'
   | 'clusters'
+  | 'durable-clusters'
   | 'cluster-detail'
   | 'search'
   | 'neighbors'
@@ -257,6 +258,18 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     agentJson: true,
   },
   {
+    name: 'durable-clusters',
+    synopsis: 'durable-clusters <owner/repo> [--include-inactive] [--member-limit <count>] [--json]',
+    description: 'List persistent cluster identities, stable slugs, and governed memberships.',
+    options: [
+      '--include-inactive  Include closed, merged, and split durable clusters',
+      '--member-limit <count>  Limit returned members per cluster',
+      '--json  Emit machine-readable JSON output explicitly',
+    ],
+    examples: ['ghcrawl durable-clusters openclaw/openclaw --member-limit 10 --json'],
+    agentJson: true,
+  },
+  {
     name: 'search',
     synopsis: 'search <owner/repo> --query <text> [--mode keyword|semantic|hybrid] [--json]',
     description: 'Search local cluster and thread data.',
@@ -472,6 +485,7 @@ export function parseRepoFlags(command: CommandName, args: string[]): ParsedRepo
       'include-comments': { type: 'boolean' },
       'full-reconcile': { type: 'boolean' },
       'include-closed': { type: 'boolean' },
+      'include-inactive': { type: 'boolean' },
       kind: { type: 'string' },
       number: { type: 'string' },
       numbers: { type: 'string' },
@@ -1120,6 +1134,20 @@ export async function run(
           sort,
           search: typeof values.search === 'string' ? values.search : undefined,
           includeClosed: values['include-closed'] === true,
+        });
+        writeJson(stdout, result);
+        return;
+      }
+      case 'durable-clusters': {
+        const { owner, repo, values } = parseRepoFlags('durable-clusters', rest);
+        const result = getService().listDurableClusters({
+          owner,
+          repo,
+          includeInactive: values['include-inactive'] === true,
+          memberLimit:
+            typeof values['member-limit'] === 'string'
+              ? parsePositiveInteger('member-limit', values['member-limit'], 'durable-clusters')
+              : undefined,
         });
         writeJson(stdout, result);
         return;

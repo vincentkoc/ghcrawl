@@ -51,6 +51,7 @@ const publicCommands = [
   'embed',
   'cluster',
   'clusters',
+  'durable-clusters',
   'cluster-detail',
   'search',
   'neighbors',
@@ -273,6 +274,7 @@ test('agent-facing command help advertises explicit --json', async () => {
     'embed',
     'cluster',
     'clusters',
+    'durable-clusters',
     'cluster-detail',
     'search',
     'neighbors',
@@ -350,6 +352,36 @@ test('exclude-cluster-member command forwards durable override inputs', async ()
   assert.match(stdout.read(), /"state": "removed_by_user"/);
 });
 
+test('durable-clusters command forwards stable cluster list options', async () => {
+  const stdout = createWritableCapture();
+  const context = makeRunContext();
+  const original = GHCrawlService.prototype.listDurableClusters;
+  let received: unknown;
+
+  GHCrawlService.prototype.listDurableClusters = function listDurableClustersStub(params: unknown) {
+    received = params;
+    return { repository: { fullName: 'openclaw/openclaw' }, clusters: [{ stableSlug: 'trace-alpha-river' }] } as never;
+  };
+
+  try {
+    await run(['durable-clusters', 'openclaw/openclaw', '--include-inactive', '--member-limit', '5'], stdout.stream, {
+      env: context.env,
+      cwd: context.cwd,
+    });
+  } finally {
+    GHCrawlService.prototype.listDurableClusters = original;
+    context.cleanup();
+  }
+
+  assert.deepEqual(received, {
+    owner: 'openclaw',
+    repo: 'openclaw',
+    includeInactive: true,
+    memberLimit: 5,
+  });
+  assert.match(stdout.read(), /trace-alpha-river/);
+});
+
 test('long-running command progress stays on stderr and payload stays on stdout', async () => {
   const stdout = createWritableCapture();
   const stderr = createWritableCapture();
@@ -418,6 +450,13 @@ test('parseRepoFlags accepts include-closed boolean flag', () => {
   assert.equal(parsed.owner, 'openclaw');
   assert.equal(parsed.repo, 'openclaw');
   assert.equal(parsed.values['include-closed'], true);
+});
+
+test('parseRepoFlags accepts include-inactive durable cluster flag', () => {
+  const parsed = parseRepoFlags('durable-clusters', ['openclaw/openclaw', '--include-inactive']);
+  assert.equal(parsed.owner, 'openclaw');
+  assert.equal(parsed.repo, 'openclaw');
+  assert.equal(parsed.values['include-inactive'], true);
 });
 
 test('parseRepoFlags accepts kind filter for threads', () => {

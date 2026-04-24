@@ -12,7 +12,9 @@ import {
   formatClusterListLabel,
   formatClusterShortName,
   formatLinkChoiceLabel,
+  formatSummariesForClipboard,
   getThreadReferenceLinks,
+  limitRenderedLines,
   getRepositoryChoices,
   parseOwnerRepoValue,
   renderMarkdownForTerminal,
@@ -88,6 +90,51 @@ test('renderDetailPane escapes user-provided text before rendering into a tags-e
   assert.match(rendered, /Summary \\{yellow-fg\\}text\\{\/yellow-fg\\}/);
   assert.match(rendered, /Neighbor \\{blue-fg\\}title\\{\/blue-fg\\}/);
   assert.ok(rendered.indexOf('Cluster signal:') < rendered.indexOf('{bold}Main{/bold}'));
+});
+
+test('renderDetailPane can compact very long bodies', () => {
+  const cluster: TuiClusterDetail = {
+    clusterId: 1,
+    displayTitle: 'Cluster 1',
+    isClosed: false,
+    closedAtLocal: null,
+    closeReasonLocal: null,
+    totalCount: 1,
+    issueCount: 1,
+    pullRequestCount: 0,
+    latestUpdatedAt: '2026-03-09T00:00:00Z',
+    representativeThreadId: 1,
+    representativeNumber: 42,
+    representativeKind: 'issue',
+    members: [],
+  };
+  const detail: TuiThreadDetail = {
+    thread: {
+      id: 1,
+      repoId: 1,
+      number: 42,
+      kind: 'issue',
+      state: 'open',
+      isClosed: false,
+      closedAtGh: null,
+      closedAtLocal: null,
+      closeReasonLocal: null,
+      title: 'Long body',
+      body: Array.from({ length: 24 }, (_value, index) => `line ${index + 1}`).join('\n'),
+      authorLogin: 'dev',
+      htmlUrl: 'https://example.com/42',
+      labels: [],
+      updatedAtGh: '2026-03-09T00:00:00Z',
+      clusterId: 1,
+    },
+    summaries: {},
+    neighbors: [],
+  };
+
+  const rendered = renderDetailPane(detail, cluster, 'detail', null, 'compact');
+  assert.match(rendered, /line 18/);
+  assert.doesNotMatch(rendered, /line 24/);
+  assert.match(rendered, /6 more line/);
 });
 
 test('renderDetailPane gives useful empty detail content before a cluster is selected', () => {
@@ -188,6 +235,21 @@ test('renderSummarySections orders and labels LLM summaries for scanning', () =>
   assert.ok(rendered.indexOf('Solution:') < rendered.indexOf('Maintainer signal:'));
   assert.ok(rendered.indexOf('Maintainer signal:') < rendered.indexOf('Cluster signal:'));
   assert.match(rendered, /\{bold\}cron\{\/bold\} timeout/);
+});
+
+test('formatSummariesForClipboard preserves ordered raw summary text', () => {
+  assert.equal(
+    formatSummariesForClipboard({
+      dedupe_summary: 'cluster',
+      problem_summary: 'purpose',
+    }),
+    'Purpose:\npurpose\n\nCluster signal:\ncluster',
+  );
+});
+
+test('limitRenderedLines truncates long rendered sections with an affordance', () => {
+  assert.equal(limitRenderedLines('a\nb\nc', 2), 'a\nb\n{gray-fg}... 1 more line(s). Use full detail or copy body to inspect all content.{/gray-fg}');
+  assert.equal(limitRenderedLines('a\nb', 2), 'a\nb');
 });
 
 test('buildThreadContextMenuItems exposes thread actions for right-click menus', () => {

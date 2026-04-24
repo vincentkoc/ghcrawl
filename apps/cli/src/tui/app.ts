@@ -92,6 +92,8 @@ type ContextMenuItem = {
   run: () => boolean | void;
 };
 
+type DetailMode = 'full' | 'compact';
+
 export function resolveBlessedTerminal(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const term = env.TERM;
   if (!term) {
@@ -142,6 +144,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       };
   let sortMode: TuiClusterSortMode = initialPreference.sortMode;
   let memberSortMode: TuiMemberSortMode = initialPreference.memberSortMode;
+  let detailMode: DetailMode = 'full';
   let minSize: TuiMinSizeFilter = initialPreference.minClusterSize;
   let wideLayout: TuiWideLayoutPreference = initialPreference.wideLayout;
   let showClosed = true;
@@ -379,7 +382,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       isRendering = false;
     }
 
-    widgets.detail.setContent(renderDetailPane(threadDetail, clusterDetail, focusPane, snapshot));
+    widgets.detail.setContent(renderDetailPane(threadDetail, clusterDetail, focusPane, snapshot, detailMode));
     updatePaneStyles(widgets, focusPane);
     const footerLines = [
       activityLines.at(-1) ?? status,
@@ -637,6 +640,12 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     render();
   };
 
+  const toggleDetailMode = (): void => {
+    detailMode = detailMode === 'full' ? 'compact' : 'full';
+    status = `Detail mode: ${detailMode}`;
+    render();
+  };
+
   const openContextMenu = (label: string, items: ContextMenuItem[], event?: MouseEventArg): void => {
     if (modalOpen || items.length === 0) {
       return;
@@ -691,7 +700,8 @@ export async function startTui(params: StartTuiParams): Promise<void> {
     if (!selectedThread) {
       return [{ label: 'Close', run: () => undefined }];
     }
-    return buildThreadContextMenuItems(threadDetail).map((item) => ({
+    return [
+      ...buildThreadContextMenuItems(threadDetail).map((item) => ({
       label: item.label,
       run: () => {
         if (item.action === 'open') {
@@ -725,7 +735,38 @@ export async function startTui(params: StartTuiParams): Promise<void> {
           focusPane = 'detail';
         }
       },
-    }));
+      })),
+      ...detailCopyContextItems(),
+    ];
+  };
+
+  const detailCopyContextItems = (): ContextMenuItem[] => {
+    if (!threadDetail) return [];
+    return [
+      {
+        label: detailMode === 'full' ? 'Use compact detail' : 'Use full detail',
+        run: toggleDetailMode,
+      },
+      {
+        label: 'Copy body',
+        run: () => {
+          status = copyTextToClipboard(threadDetail?.thread.body ?? '') ? 'Copied body' : 'Clipboard copy failed';
+        },
+      },
+      {
+        label: 'Copy summaries',
+        run: () => {
+          status = copyTextToClipboard(formatSummariesForClipboard(threadDetail?.summaries ?? {})) ? 'Copied summaries' : 'Clipboard copy failed';
+        },
+      },
+      {
+        label: 'Copy links',
+        run: () => {
+          const links = getThreadReferenceLinks(threadDetail);
+          status = links.length > 0 ? (copyTextToClipboard(links.join('\n')) ? 'Copied links' : 'Clipboard copy failed') : 'No referenced links found';
+        },
+      },
+    ];
   };
 
   const openLinkPicker = (mode: 'open' | 'copy'): void => {
@@ -1327,6 +1368,7 @@ export function renderDetailPane(
   clusterDetail: TuiClusterDetail | null,
   focusPane: TuiFocusPane,
   snapshot?: TuiSnapshot | null,
+  detailMode: DetailMode = 'full',
 ): string {
   if (!clusterDetail) {
     const repoLabel = snapshot?.repository.fullName ?? 'No repository selected';
@@ -1374,7 +1416,7 @@ export function renderDetailPane(
       : focusPane === 'detail'
         ? 'No neighbors available.'
         : 'Neighbors load when the detail pane is focused.';
-  const body = renderMarkdownForTerminal(thread.body ?? '(no body)');
+  const body = limitRenderedLines(renderMarkdownForTerminal(thread.body ?? '(no body)'), detailMode === 'compact' ? 18 : 240);
   const referenceLinks = getThreadReferenceLinks(threadDetail);
   const linksSection =
     referenceLinks.length > 0 ? `\n\n{bold}Links{/bold}\n${referenceLinks.map((url, index) => `${index + 1}. ${escapeBlessedText(url)}`).join('\n')}` : '';
@@ -1437,6 +1479,15 @@ export function renderMarkdownForTerminal(markdown: string): string {
   return rendered.join('\n').replace(/\n{4,}/g, '\n\n\n').trimEnd();
 }
 
+export function limitRenderedLines(value: string, maxLines: number): string {
+  const lines = value.split('\n');
+  if (lines.length <= maxLines) {
+    return value;
+  }
+  const omitted = lines.length - maxLines;
+  return `${lines.slice(0, maxLines).join('\n')}\n{gray-fg}... ${omitted} more line(s). Use full detail or copy body to inspect all content.{/gray-fg}`;
+}
+
 export function getThreadReferenceLinks(threadDetail: TuiThreadDetail | null): string[] {
   if (!threadDetail) return [];
   return uniqueStrings([
@@ -1485,6 +1536,14 @@ function formatSummaryLabel(key: SummaryKey): string {
   if (key === 'solution_summary') return 'Solution';
   if (key === 'maintainer_signal_summary') return 'Maintainer signal';
   return 'Cluster signal';
+}
+
+export function formatSummariesForClipboard(summaries: TuiThreadDetail['summaries']): string {
+  return SUMMARY_SECTION_ORDER.flatMap((key) => {
+    const value = summaries[key];
+    if (!value) return [];
+    return [`${formatSummaryLabel(key)}:\n${value}`];
+  }).join('\n\n');
 }
 
 type InlineMarkdownSegment =

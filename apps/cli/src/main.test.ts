@@ -392,6 +392,44 @@ test('set-cluster-canonical command forwards durable override inputs', async () 
   assert.match(stdout.read(), /"action": "force_canonical"/);
 });
 
+test('include-cluster-member command forwards durable override inputs', async () => {
+  const stdout = createWritableCapture();
+  const context = makeRunContext();
+  const original = GHCrawlService.prototype.includeThreadInCluster;
+  let received: unknown;
+
+  GHCrawlService.prototype.includeThreadInCluster = function includeThreadInClusterStub(params: unknown) {
+    received = params;
+    return {
+      ok: true,
+      clusterId: 7,
+      thread: { number: 42 },
+      action: 'force_include',
+      state: 'active',
+      message: 'included',
+    } as never;
+  };
+
+  try {
+    await run(['include-cluster-member', 'openclaw/openclaw', '--id', '7', '--number', '42', '--reason', 'same root cause'], stdout.stream, {
+      env: context.env,
+      cwd: context.cwd,
+    });
+  } finally {
+    GHCrawlService.prototype.includeThreadInCluster = original;
+    context.cleanup();
+  }
+
+  assert.deepEqual(received, {
+    owner: 'openclaw',
+    repo: 'openclaw',
+    clusterId: 7,
+    threadNumber: 42,
+    reason: 'same root cause',
+  });
+  assert.match(stdout.read(), /"action": "force_include"/);
+});
+
 test('durable-clusters command forwards stable cluster list options', async () => {
   const stdout = createWritableCapture();
   const context = makeRunContext();

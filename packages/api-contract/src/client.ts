@@ -11,6 +11,7 @@ import {
   clustersResponseSchema,
   excludeClusterMemberRequestSchema,
   healthResponseSchema,
+  includeClusterMemberRequestSchema,
   refreshRequestSchema,
   refreshResponseSchema,
   repositoriesResponseSchema,
@@ -63,6 +64,7 @@ export type GitcrawlClient = {
   closeThread: (request: { owner: string; repo: string; threadNumber: number }) => Promise<CloseResponse>;
   closeCluster: (request: { owner: string; repo: string; clusterId: number }) => Promise<CloseResponse>;
   excludeClusterMember: (request: { owner: string; repo: string; clusterId: number; threadNumber: number; reason?: string }) => Promise<ClusterOverrideResponse>;
+  includeClusterMember: (request: { owner: string; repo: string; clusterId: number; threadNumber: number; reason?: string }) => Promise<ClusterOverrideResponse>;
   setClusterCanonical: (request: { owner: string; repo: string; clusterId: number; threadNumber: number; reason?: string }) => Promise<ClusterOverrideResponse>;
 };
 
@@ -180,6 +182,15 @@ export function createGitcrawlClient(baseUrl: string, fetchImpl: FetchLike = fet
     async excludeClusterMember(request) {
       const body = excludeClusterMemberRequestSchema.parse(request);
       const res = await fetchImpl(`${normalized}/actions/exclude-cluster-member`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return readJson(res, clusterOverrideResponseSchema);
+    },
+    async includeClusterMember(request) {
+      const body = includeClusterMemberRequestSchema.parse(request);
+      const res = await fetchImpl(`${normalized}/actions/include-cluster-member`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),

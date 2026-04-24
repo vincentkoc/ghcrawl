@@ -22,6 +22,7 @@ type CommandName =
   | 'close-thread'
   | 'close-cluster'
   | 'exclude-cluster-member'
+  | 'include-cluster-member'
   | 'set-cluster-canonical'
   | 'summarize'
   | 'key-summaries'
@@ -208,6 +209,19 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
       '--json  Emit machine-readable JSON output explicitly',
     ],
     examples: ['ghcrawl exclude-cluster-member openclaw/openclaw --id 123 --number 42 --reason "false positive" --json'],
+    agentJson: true,
+  },
+  {
+    name: 'include-cluster-member',
+    synopsis: 'include-cluster-member <owner/repo> --id <cluster-id> --number <thread> [--reason <text>] [--json]',
+    description: 'Add one issue or PR to a durable cluster and keep it included across rebuilds.',
+    options: [
+      '--id <cluster-id>  Durable cluster id',
+      '--number <thread>  Issue or PR number to include',
+      '--reason <text>  Optional maintainer reason',
+      '--json  Emit machine-readable JSON output explicitly',
+    ],
+    examples: ['ghcrawl include-cluster-member openclaw/openclaw --id 123 --number 42 --reason "same root cause" --json'],
     agentJson: true,
   },
   {
@@ -1084,6 +1098,24 @@ export async function run(
           repo,
           clusterId: parsePositiveInteger('id', values.id, 'exclude-cluster-member'),
           threadNumber: parsePositiveInteger('number', values.number, 'exclude-cluster-member'),
+          reason: typeof values.reason === 'string' ? values.reason : undefined,
+        });
+        writeJson(stdout, result);
+        return;
+      }
+      case 'include-cluster-member': {
+        const { owner, repo, values } = parseRepoFlags('include-cluster-member', rest);
+        if (typeof values.id !== 'string') {
+          throw new CliUsageError('Missing --id', 'include-cluster-member');
+        }
+        if (typeof values.number !== 'string') {
+          throw new CliUsageError('Missing --number', 'include-cluster-member');
+        }
+        const result = getService().includeThreadInCluster({
+          owner,
+          repo,
+          clusterId: parsePositiveInteger('id', values.id, 'include-cluster-member'),
+          threadNumber: parsePositiveInteger('number', values.number, 'include-cluster-member'),
           reason: typeof values.reason === 'string' ? values.reason : undefined,
         });
         writeJson(stdout, result);

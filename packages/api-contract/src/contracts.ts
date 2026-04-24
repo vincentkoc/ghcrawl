@@ -287,6 +287,15 @@ export const excludeClusterMemberRequestSchema = z.object({
 });
 export type ExcludeClusterMemberRequest = z.infer<typeof excludeClusterMemberRequestSchema>;
 
+export const includeClusterMemberRequestSchema = z.object({
+  owner: z.string(),
+  repo: z.string(),
+  clusterId: z.number().int().positive(),
+  threadNumber: z.number().int().positive(),
+  reason: z.string().trim().min(1).optional(),
+});
+export type IncludeClusterMemberRequest = z.infer<typeof includeClusterMemberRequestSchema>;
+
 export const setClusterCanonicalRequestSchema = z.object({
   owner: z.string(),
   repo: z.string(),
@@ -311,7 +320,7 @@ export const clusterOverrideResponseSchema = z.object({
   repository: repositorySchema,
   clusterId: z.number().int().positive(),
   thread: threadSchema,
-  action: z.enum(['exclude', 'force_canonical']),
+  action: z.enum(['exclude', 'force_include', 'force_canonical']),
   state: z.enum(['active', 'removed_by_user', 'blocked_by_override']),
   message: z.string(),
 });

@@ -7,6 +7,7 @@ import {
   durableClustersResponseSchema,
   excludeClusterMemberRequestSchema,
   healthResponseSchema,
+  includeClusterMemberRequestSchema,
   neighborsResponseSchema,
   searchResponseSchema,
   setClusterCanonicalRequestSchema,
@@ -77,6 +78,18 @@ test('set cluster canonical request trims optional reason', () => {
   });
 
   assert.equal(parsed.reason, 'best root issue');
+});
+
+test('include cluster member request trims optional reason', () => {
+  const parsed = includeClusterMemberRequestSchema.parse({
+    owner: 'openclaw',
+    repo: 'openclaw',
+    clusterId: 7,
+    threadNumber: 42,
+    reason: '  same root cause  ',
+  });
+
+  assert.equal(parsed.reason, 'same root cause');
 });
 
 test('cluster override response accepts durable removal state', () => {

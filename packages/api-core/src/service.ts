@@ -41,6 +41,7 @@ import {
   type ExcludeClusterMemberRequest,
   type EmbedResultDto,
   type HealthResponse,
+  type IncludeClusterMemberRequest,
   type NeighborsResponse,
   type RefreshResponse,
   type RepositoriesResponse,
@@ -992,6 +993,75 @@ export class GHCrawlService {
       action: 'exclude',
       state: 'removed_by_user',
       message: `Removed ${thread.kind} #${thread.number} from durable cluster ${cluster.id}.`,
+    });
+  }
+
+  includeThreadInCluster(params: IncludeClusterMemberRequest): ClusterOverrideResponse {
+    const repository = this.requireRepository(params.owner, params.repo);
+    const cluster = this.db
+      .prepare('select id from cluster_groups where repo_id = ? and id = ? limit 1')
+      .get(repository.id, params.clusterId) as { id: number } | undefined;
+    if (!cluster) {
+      throw new Error(`Durable cluster ${params.clusterId} was not found for ${repository.fullName}.`);
+    }
+
+    const thread = this.db
+      .prepare('select * from threads where repo_id = ? and number = ? limit 1')
+      .get(repository.id, params.threadNumber) as ThreadRow | undefined;
+    if (!thread) {
+      throw new Error(`Thread #${params.threadNumber} was not found for ${repository.fullName}.`);
+    }
+
+    const timestamp = nowIso();
+    this.db.transaction(() => {
+      this.db
+        .prepare("delete from cluster_overrides where cluster_id = ? and thread_id = ? and action = 'exclude'")
+        .run(cluster.id, thread.id);
+      this.db
+        .prepare(
+          `insert into cluster_overrides (repo_id, cluster_id, thread_id, action, reason, created_at, expires_at)
+           values (?, ?, ?, 'force_include', ?, ?, null)
+           on conflict(cluster_id, thread_id, action) do update set
+             reason = excluded.reason,
+             created_at = excluded.created_at,
+             expires_at = null`,
+        )
+        .run(repository.id, cluster.id, thread.id, params.reason ?? null, timestamp);
+      upsertClusterMembership(this.db, {
+        clusterId: cluster.id,
+        threadId: thread.id,
+        role: 'related',
+        state: 'active',
+        scoreToRepresentative: null,
+        addedBy: 'user',
+        addedReason: {
+          source: 'includeThreadInCluster',
+          reason: params.reason ?? null,
+        },
+      });
+      this.db
+        .prepare("update cluster_memberships set added_by = 'user', updated_at = ? where cluster_id = ? and thread_id = ?")
+        .run(timestamp, cluster.id, thread.id);
+      recordClusterEvent(this.db, {
+        clusterId: cluster.id,
+        eventType: 'manual_force_include',
+        actorKind: 'user',
+        payload: {
+          threadId: thread.id,
+          threadNumber: thread.number,
+          reason: params.reason ?? null,
+        },
+      });
+    })();
+
+    return clusterOverrideResponseSchema.parse({
+      ok: true,
+      repository,
+      clusterId: cluster.id,
+      thread: threadToDto(thread),
+      action: 'force_include',
+      state: 'active',
+      message: `Included ${thread.kind} #${thread.number} in durable cluster ${cluster.id}.`,
     });
   }
 
@@ -5361,6 +5431,52 @@ export class GHCrawlService {
               threadId: memberId,
               representativeThreadId,
               scoreToRepresentative: memberId === representativeThreadId ? 1 : score,
+            },
+          });
+        }
+        const forcedIncludes = this.db
+          .prepare(
+            `select thread_id, reason
+             from cluster_overrides
+             where cluster_id = ?
+               and action = 'force_include'
+               and (expires_at is null or expires_at > ?)
+             order by created_at asc, id asc`,
+          )
+          .all(clusterId, nowIso()) as Array<{ thread_id: number; reason: string | null }>;
+        for (const forced of forcedIncludes) {
+          if (cluster.members.includes(forced.thread_id)) {
+            continue;
+          }
+          const scoreKey = this.edgeKey(representativeThreadId, forced.thread_id);
+          const score = forced.thread_id === representativeThreadId ? 1 : (aggregatedEdges.get(scoreKey)?.score ?? null);
+          upsertClusterMembership(this.db, {
+            clusterId,
+            threadId: forced.thread_id,
+            role: forced.thread_id === representativeThreadId ? 'canonical' : 'related',
+            state: 'active',
+            scoreToRepresentative: score,
+            runId: pipelineRunId,
+            addedBy: 'user',
+            addedReason: {
+              source: 'cluster_overrides',
+              action: 'force_include',
+              reason: forced.reason,
+            },
+          });
+          this.db
+            .prepare("update cluster_memberships set added_by = 'user', updated_at = ? where cluster_id = ? and thread_id = ?")
+            .run(nowIso(), clusterId, forced.thread_id);
+          recordClusterEvent(this.db, {
+            clusterId,
+            runId: pipelineRunId,
+            eventType: 'force_include_member',
+            actorKind: 'algo',
+            payload: {
+              threadId: forced.thread_id,
+              representativeThreadId,
+              scoreToRepresentative: score,
+              reason: forced.reason,
             },
           });
         }

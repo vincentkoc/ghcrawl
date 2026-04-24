@@ -243,8 +243,10 @@ ghcrawl close-thread owner/repo --number 42 --json
 ghcrawl close-cluster owner/repo --id 123 --json
 ghcrawl clusters owner/repo --min-size 10 --limit 20 --json
 ghcrawl clusters owner/repo --min-size 10 --limit 20 --include-closed --json
+ghcrawl durable-clusters owner/repo --member-limit 10 --json
 ghcrawl cluster-detail owner/repo --id 123 --json
 ghcrawl cluster-detail owner/repo --id 123 --include-closed --json
+ghcrawl cluster-explain owner/repo --id 123 --member-limit 20 --event-limit 50 --json
 ghcrawl search owner/repo --query "download stalls" --json
 ```
 
@@ -257,6 +259,25 @@ By default, JSON list commands filter out locally closed issues/PRs and complete
 Use `close-thread` when you know a local issue/PR should be treated as closed before the next GitHub sync catches up. If that was the last open item in its cluster, `ghcrawl` automatically marks the cluster closed too.
 
 Use `close-cluster` when you want to locally suppress a whole cluster from default JSON exploration without waiting for a rebuild.
+
+## Durable Cluster Governance
+
+The durable cluster commands operate on stable cluster identities, not one-off run snapshots:
+
+```bash
+ghcrawl durable-clusters owner/repo --member-limit 10 --json
+ghcrawl cluster-explain owner/repo --id 123 --json
+ghcrawl exclude-cluster-member owner/repo --id 123 --number 42 --reason "false positive" --json
+ghcrawl include-cluster-member owner/repo --id 123 --number 42 --reason "same root cause" --json
+ghcrawl set-cluster-canonical owner/repo --id 123 --number 42 --reason "best root issue" --json
+ghcrawl merge-clusters owner/repo --source 123 --target 456 --reason "same incident" --json
+ghcrawl split-cluster owner/repo --source 123 --numbers 42,43 --reason "separate root cause" --json
+ghcrawl cluster owner/repo --number 42 --json
+```
+
+Use `cluster-explain` when you need to answer why a durable cluster exists. It returns the stable slug, aliases, governed memberships, overrides, event history, and pairwise evidence sources such as deterministic fingerprints, hunk overlap, and vector-backed edges.
+
+Maintainer overrides are sticky. If you exclude a thread from a durable cluster, future clustering records that decision and will not silently re-add it to the same cluster. `cluster --number` refreshes only one durable neighborhood, which is the cheaper path after a small sync or a manual governance edit.
 
 ## Cost To Operate
 
@@ -301,6 +322,7 @@ ghcrawl refresh owner/repo
 ghcrawl threads owner/repo --numbers 42,43,44 --json
 ghcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent --json
 ghcrawl cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280 --json
+ghcrawl cluster-explain owner/repo --id 123 --member-limit 20 --event-limit 50 --json
 ```
 
 ### Video Walkthrough

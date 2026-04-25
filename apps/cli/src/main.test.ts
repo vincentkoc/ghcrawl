@@ -49,6 +49,7 @@ const publicCommands = [
   'validate-sync',
   'portable-size',
   'sync-status',
+  'import-sync',
   'refresh',
   'optimize',
   'runs',
@@ -871,6 +872,35 @@ test('sync-status command forwards portable path', async () => {
     portablePath: '/tmp/openclaw.sync.db',
   });
   assert.match(stdout.read(), /"portableRepositoryFound": true/);
+});
+
+test('import-sync command forwards portable path', async () => {
+  const stdout = createWritableCapture();
+  const context = makeRunContext();
+  const original = GHCrawlService.prototype.importPortableSync;
+  let received: unknown;
+
+  GHCrawlService.prototype.importPortableSync = function importPortableSyncStub(dbPath: string) {
+    received = dbPath;
+    return {
+      ok: true,
+      repository: { fullName: 'openclaw/openclaw' },
+      imported: { threads: 1 },
+    } as never;
+  };
+
+  try {
+    await run(['import-sync', '/tmp/openclaw.sync.db'], stdout.stream, {
+      env: context.env,
+      cwd: context.cwd,
+    });
+  } finally {
+    GHCrawlService.prototype.importPortableSync = original;
+    context.cleanup();
+  }
+
+  assert.equal(received, '/tmp/openclaw.sync.db');
+  assert.match(stdout.read(), /"threads": 1/);
 });
 
 test('refresh command forwards include-code hydration flag', async () => {

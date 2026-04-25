@@ -107,10 +107,12 @@ import { makeGitHubClient, type GitHubClient } from './github/client.js';
 import { OpenAiProvider, type AiProvider } from './openai/provider.js';
 import {
   exportPortableSyncDatabase,
+  importPortableSyncDatabase,
   portableSyncSizeReport,
   portableSyncStatusReport,
   validatePortableSyncDatabase,
   type PortableSyncExportResponse,
+  type PortableSyncImportResponse,
   type PortableSyncProfile,
   type PortableSyncSizeResponse,
   type PortableSyncStatusResponse,
@@ -3433,6 +3435,13 @@ export class GHCrawlService {
       liveDb: this.db,
       repository,
       portablePath: params.portablePath,
+    });
+  }
+
+  importPortableSync(dbPath: string): PortableSyncImportResponse {
+    return importPortableSyncDatabase({
+      liveDb: this.db,
+      portablePath: dbPath,
     });
   }
 

@@ -27,6 +27,7 @@ type CommandName =
   | 'validate-sync'
   | 'portable-size'
   | 'sync-status'
+  | 'import-sync'
   | 'refresh'
   | 'optimize'
   | 'runs'
@@ -186,6 +187,14 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
     description: 'Compare the live repository store against a portable git-sync SQLite database.',
     options: ['--portable <path>  Portable SQLite path to compare', '--json  Emit machine-readable JSON output explicitly'],
     examples: ['ghcrawl sync-status openclaw/openclaw --portable ./openclaw.sync.db --json'],
+    agentJson: true,
+  },
+  {
+    name: 'import-sync',
+    synopsis: 'import-sync <path> [--json]',
+    description: 'Import a portable git-sync SQLite database into the configured live store.',
+    options: ['--json  Emit machine-readable JSON output explicitly'],
+    examples: ['ghcrawl import-sync ./openclaw.sync.db --json'],
     agentJson: true,
   },
   {
@@ -1144,6 +1153,15 @@ export async function run(
           repo,
           portablePath: values.portable,
         });
+        writeJson(stdout, result);
+        return;
+      }
+      case 'import-sync': {
+        const parsed = parseArgsForCommand('import-sync', rest, { json: { type: 'boolean' } }, true);
+        if (parsed.positionals.length !== 1) {
+          throw new CliUsageError('import-sync requires exactly one portable database path', 'import-sync');
+        }
+        const result = getService().importPortableSync(parsed.positionals[0]);
         writeJson(stdout, result);
         return;
       }

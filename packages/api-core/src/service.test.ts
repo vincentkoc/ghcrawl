@@ -384,6 +384,30 @@ test('exportPortableSync writes a compact sync database without bulky cache tabl
     assert.equal(leanResponse.profile, 'lean');
     assert.equal(leanResponse.manifestPath, `${leanOutputPath}.manifest.json`);
     assert.equal(fs.existsSync(leanResponse.manifestPath), true);
+
+    const importService = new GHCrawlService({
+      config: {
+        ...config,
+        dbPath: path.join(config.configDir, 'import-target.db'),
+      },
+      github: service.github,
+    });
+    try {
+      const importResult = importService.importPortableSync(outputPath);
+      assert.equal(importResult.ok, true);
+      assert.equal(importResult.repository.fullName, 'openclaw/openclaw');
+      assert.equal(importResult.imported.threads, 1);
+      assert.equal(importResult.imported.clusterGroups, 1);
+      assert.equal(importResult.imported.clusterMemberships, 1);
+      const importedThread = importService.db.prepare('select body, raw_json from threads where number = 42').get() as {
+        body: string;
+        raw_json: string;
+      };
+      assert.equal(importedThread.body.length, 64);
+      assert.equal(importedThread.raw_json, '{}');
+    } finally {
+      importService.close();
+    }
   } finally {
     service.close();
   }

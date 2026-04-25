@@ -108,7 +108,11 @@ import { OpenAiProvider, type AiProvider } from './openai/provider.js';
 import {
   DEFAULT_PORTABLE_BODY_CHARS,
   exportPortableSyncDatabase,
+  portableSyncSizeReport,
+  validatePortableSyncDatabase,
   type PortableSyncExportResponse,
+  type PortableSyncSizeResponse,
+  type PortableSyncValidationResponse,
 } from './portable/sync-store.js';
 import { cosineSimilarity, dotProduct, normalizeEmbedding, rankNearestNeighbors, rankNearestNeighborsByScore } from './search/exact.js';
 import type { VectorNeighbor, VectorQueryParams, VectorStore } from './vector/store.js';
@@ -3407,6 +3411,14 @@ export class GHCrawlService {
       outputPath,
       bodyChars: params.bodyChars ?? DEFAULT_PORTABLE_BODY_CHARS,
     });
+  }
+
+  validatePortableSync(dbPath: string): PortableSyncValidationResponse {
+    return validatePortableSyncDatabase(dbPath);
+  }
+
+  portableSyncSize(dbPath: string): PortableSyncSizeResponse {
+    return portableSyncSizeReport(dbPath);
   }
 
   private optimizeSqliteTarget(params: {

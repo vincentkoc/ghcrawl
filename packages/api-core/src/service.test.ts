@@ -317,6 +317,18 @@ test('exportPortableSync writes a compact sync database without bulky cache tabl
     assert.ok(response.excluded.includes('thread_vectors'));
     assert.equal(response.tables.find((table) => table.name === 'threads')?.rows, 1);
 
+    const validation = service.validatePortableSync(outputPath);
+    assert.equal(validation.ok, true);
+    assert.equal(validation.schema, 'ghcrawl-portable-sync-v1');
+    assert.deepEqual(validation.missingTables, []);
+    assert.deepEqual(validation.unexpectedExcludedTables, []);
+
+    const size = service.portableSyncSize(outputPath);
+    assert.equal(size.ok, true);
+    assert.equal(size.path, outputPath);
+    assert.ok(size.totalBytes > 0);
+    assert.ok((size.tables.find((table) => table.name === 'threads')?.bytes ?? 0) > 0);
+
     const portable = openDb(outputPath);
     try {
       const thread = portable.prepare('select body_excerpt, body_length from threads where number = 42').get() as {

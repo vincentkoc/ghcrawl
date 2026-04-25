@@ -5,7 +5,16 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
-import { createApiServer, GHCrawlService, loadConfig, readPersistedConfig, writePersistedConfig, type LoadConfigOptions } from '@ghcrawl/api-core';
+import {
+  createApiServer,
+  GHCrawlService,
+  loadConfig,
+  portableSyncSizeReport,
+  readPersistedConfig,
+  validatePortableSyncDatabase,
+  writePersistedConfig,
+  type LoadConfigOptions,
+} from '@ghcrawl/api-core';
 import { createHeapDiagnostics, type HeapDiagnostics } from './heap-diagnostics.js';
 import { startTui } from './tui/app.js';
 
@@ -15,6 +24,8 @@ type CommandName =
   | 'version'
   | 'sync'
   | 'export-sync'
+  | 'validate-sync'
+  | 'portable-size'
   | 'refresh'
   | 'optimize'
   | 'runs'
@@ -148,6 +159,22 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
       '--json  Emit machine-readable JSON output explicitly',
     ],
     examples: ['ghcrawl export-sync openclaw/openclaw --output ./openclaw.sync.db --json'],
+    agentJson: true,
+  },
+  {
+    name: 'validate-sync',
+    synopsis: 'validate-sync <path> [--json]',
+    description: 'Validate a portable git-sync SQLite database without mutating it.',
+    options: ['--json  Emit machine-readable JSON output explicitly'],
+    examples: ['ghcrawl validate-sync ./openclaw.sync.db --json'],
+    agentJson: true,
+  },
+  {
+    name: 'portable-size',
+    synopsis: 'portable-size <path> [--json]',
+    description: 'Report portable git-sync SQLite table sizes.',
+    options: ['--json  Emit machine-readable JSON output explicitly'],
+    examples: ['ghcrawl portable-size ./openclaw.sync.db --json'],
     agentJson: true,
   },
   {
@@ -1070,6 +1097,24 @@ export async function run(
               ? parsePositiveInteger('body-chars', values['body-chars'], 'export-sync')
               : undefined,
         });
+        writeJson(stdout, result);
+        return;
+      }
+      case 'validate-sync': {
+        const parsed = parseArgsForCommand('validate-sync', rest, { json: { type: 'boolean' } }, true);
+        if (parsed.positionals.length !== 1) {
+          throw new CliUsageError('validate-sync requires exactly one portable database path', 'validate-sync');
+        }
+        const result = validatePortableSyncDatabase(parsed.positionals[0]);
+        writeJson(stdout, result);
+        return;
+      }
+      case 'portable-size': {
+        const parsed = parseArgsForCommand('portable-size', rest, { json: { type: 'boolean' } }, true);
+        if (parsed.positionals.length !== 1) {
+          throw new CliUsageError('portable-size requires exactly one portable database path', 'portable-size');
+        }
+        const result = portableSyncSizeReport(parsed.positionals[0]);
         writeJson(stdout, result);
         return;
       }

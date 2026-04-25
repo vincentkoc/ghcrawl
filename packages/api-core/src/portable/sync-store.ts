@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import BetterSqlite3 from 'better-sqlite3';
 import type { RepositoryDto } from '@ghcrawl/api-contract';
 
 import { checkpointWal, openDb, type SqliteDatabase } from '../db/sqlite.js';
@@ -67,6 +68,28 @@ export type PortableSyncExportResponse = {
   bodyChars: number;
   tables: Array<{ name: string; rows: number }>;
   excluded: string[];
+};
+
+export type PortableSyncValidationResponse = {
+  ok: boolean;
+  path: string;
+  schema: string | null;
+  metadata: Record<string, string>;
+  integrity: string[];
+  foreignKeyViolations: Array<Record<string, unknown>>;
+  missingTables: string[];
+  unexpectedExcludedTables: string[];
+  tables: Array<{ name: string; rows: number }>;
+  errors: string[];
+};
+
+export type PortableSyncSizeResponse = {
+  ok: true;
+  path: string;
+  totalBytes: number;
+  walBytes: number;
+  shmBytes: number;
+  tables: Array<{ name: string; bytes: number | null; rows: number | null }>;
 };
 
 export function exportPortableSyncDatabase(params: PortableSyncExportOptions): PortableSyncExportResponse {
@@ -317,6 +340,60 @@ export function createPortableSyncSchema(db: SqliteDatabase): void {
   `);
 }
 
+export function validatePortableSyncDatabase(dbPath: string): PortableSyncValidationResponse {
+  const resolvedPath = path.resolve(dbPath);
+  const db = openReadonlyDb(resolvedPath);
+  try {
+    const tableNames = listTables(db);
+    const missingTables = PORTABLE_SYNC_TABLES.filter((name) => !tableNames.has(name));
+    const unexpectedExcludedTables = PORTABLE_SYNC_EXCLUDED_TABLES.filter((name) => tableNames.has(name));
+    const metadata = tableNames.has('portable_metadata') ? readPortableMetadata(db) : {};
+    const integrity = readIntegrityCheck(db);
+    const foreignKeyViolations = readForeignKeyViolations(db);
+    const schema = metadata.schema ?? null;
+    const errors = [
+      ...missingTables.map((name) => `missing required table: ${name}`),
+      ...unexpectedExcludedTables.map((name) => `excluded cache table is present: ${name}`),
+      ...(schema === PORTABLE_SYNC_SCHEMA_VERSION ? [] : [`unexpected schema: ${schema ?? 'missing'}`]),
+      ...integrity.filter((message) => message !== 'ok').map((message) => `integrity_check: ${message}`),
+      ...foreignKeyViolations.map((violation) => `foreign_key_check: ${JSON.stringify(violation)}`),
+    ];
+
+    return {
+      ok: errors.length === 0,
+      path: resolvedPath,
+      schema,
+      metadata,
+      integrity,
+      foreignKeyViolations,
+      missingTables,
+      unexpectedExcludedTables,
+      tables: PORTABLE_SYNC_TABLES.filter((name) => tableNames.has(name)).map((name) => ({ name, rows: countRows(db, name) })),
+      errors,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export function portableSyncSizeReport(dbPath: string): PortableSyncSizeResponse {
+  const resolvedPath = path.resolve(dbPath);
+  const db = openReadonlyDb(resolvedPath);
+  try {
+    const tables = readDbstatSizes(db);
+    return {
+      ok: true,
+      path: resolvedPath,
+      totalBytes: fileSize(resolvedPath),
+      walBytes: fileSize(`${resolvedPath}-wal`),
+      shmBytes: fileSize(`${resolvedPath}-shm`),
+      tables,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 export function populatePortableSyncDb(db: SqliteDatabase, params: { repoId: number; sourcePath: string; bodyChars: number }): void {
   const exportedAt = nowIso();
   const insertMetadata = db.prepare('insert into portable_metadata (key, value) values (?, ?)');
@@ -423,6 +500,68 @@ export function populatePortableSyncDb(db: SqliteDatabase, params: { repoId: num
 function countRows(db: SqliteDatabase, tableName: string): number {
   const row = db.prepare(`select count(*) as count from "${tableName}"`).get() as { count: number };
   return row.count;
+}
+
+function openReadonlyDb(dbPath: string): SqliteDatabase {
+  return new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
+}
+
+function listTables(db: SqliteDatabase): Set<string> {
+  const rows = db
+    .prepare("select name from sqlite_master where type in ('table', 'view') and name not like 'sqlite_%'")
+    .all() as Array<{ name: string }>;
+  return new Set(rows.map((row) => row.name));
+}
+
+function readPortableMetadata(db: SqliteDatabase): Record<string, string> {
+  const rows = db.prepare('select key, value from portable_metadata order by key').all() as Array<{ key: string; value: string }>;
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+function readIntegrityCheck(db: SqliteDatabase): string[] {
+  const rows = db.prepare('pragma integrity_check').all() as Array<{ integrity_check: string }>;
+  return rows.map((row) => row.integrity_check);
+}
+
+function readForeignKeyViolations(db: SqliteDatabase): Array<Record<string, unknown>> {
+  return db.prepare('pragma foreign_key_check').all() as Array<Record<string, unknown>>;
+}
+
+function readDbstatSizes(db: SqliteDatabase): Array<{ name: string; bytes: number | null; rows: number | null }> {
+  try {
+    const rows = db
+      .prepare(
+        `select
+           s.name as name,
+           s.bytes as bytes,
+           coalesce(t.row_count, 0) as rows
+         from (
+           select name, sum(pgsize) as bytes
+           from dbstat
+           where name not like 'sqlite_%'
+           group by name
+         ) s
+         left join (
+           select name, null as row_count
+           from sqlite_master
+           where 0
+         ) t on t.name = s.name
+         order by s.bytes desc, s.name asc`,
+      )
+      .all() as Array<{ name: string; bytes: number; rows: number | null }>;
+    return rows.map((row) => ({ name: row.name, bytes: row.bytes, rows: safeCountRows(db, row.name) }));
+  } catch {
+    const tableNames = [...listTables(db)].sort();
+    return tableNames.map((name) => ({ name, bytes: null, rows: safeCountRows(db, name) }));
+  }
+}
+
+function safeCountRows(db: SqliteDatabase, tableName: string): number | null {
+  try {
+    return countRows(db, tableName);
+  } catch {
+    return null;
+  }
 }
 
 function attachedTableHasColumn(db: SqliteDatabase, schemaName: string, tableName: string, columnName: string): boolean {

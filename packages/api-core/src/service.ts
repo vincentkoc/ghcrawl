@@ -125,6 +125,7 @@ import { finishServiceRun, listRunHistoryForRepository, startServiceRun } from '
 import { cosineSimilarity, dotProduct, normalizeEmbedding, rankNearestNeighbors, rankNearestNeighborsByScore } from './search/exact.js';
 import { missingVectorStoreTarget, optimizeSqliteTarget } from './storage-maintenance.js';
 import { getSyncCursorState, writeSyncCursorState } from './sync/cursor.js';
+import { getLatestTuiKeySummary, getTopChangedFiles, getTuiThreadSummaries } from './tui/thread-detail.js';
 import {
   ACTIVE_EMBED_DIMENSIONS,
   ACTIVE_EMBED_PIPELINE_VERSION,
@@ -192,7 +193,6 @@ import {
   isEffectivelyClosed,
   isMissingGitHubResourceError,
   isPullRequestPayload,
-  normalizeKeySummaryDisplayText,
   normalizeSummaryText,
   nowIso,
   parseArray,
@@ -3187,27 +3187,9 @@ export class GHCrawlService {
           .get(latestRun.id, row.id) as { cluster_id: number } | undefined) ?? null)
       : null;
 
-    const summaryRows = this.db
-      .prepare(
-        `select summary_kind, summary_text
-         from document_summaries
-         where thread_id = ? and model = ? and prompt_version = ?
-         order by summary_kind asc`,
-      )
-      .all(row.id, this.config.summaryModel, SUMMARY_PROMPT_VERSION) as Array<{ summary_kind: string; summary_text: string }>;
-    const summaries: TuiThreadDetail['summaries'] = {};
-    for (const summary of summaryRows) {
-      if (
-        summary.summary_kind === 'problem_summary' ||
-        summary.summary_kind === 'solution_summary' ||
-        summary.summary_kind === 'maintainer_signal_summary' ||
-        summary.summary_kind === 'dedupe_summary'
-      ) {
-        summaries[summary.summary_kind] = summary.summary_text;
-      }
-    }
-    const topFiles = this.getTopChangedFiles(row.id, 5);
-    const keySummary = this.getLatestKeySummary(row.id);
+    const summaries = getTuiThreadSummaries(this.db, row.id, this.config.summaryModel);
+    const topFiles = getTopChangedFiles(this.db, row.id, 5);
+    const keySummary = getLatestTuiKeySummary(this.db, row.id, this.config.summaryModel);
 
     let neighbors: SearchHitDto['neighbors'] = [];
     if (params.includeNeighbors !== false) {
@@ -3234,63 +3216,6 @@ export class GHCrawlService {
       topFiles,
       neighbors,
     };
-  }
-
-  private getLatestKeySummary(threadId: number): TuiThreadDetail['keySummary'] {
-    const row = this.db
-      .prepare(
-        `select ks.summary_kind, ks.prompt_version, ks.model, ks.key_text
-         from thread_key_summaries ks
-         join thread_revisions tr on tr.id = ks.thread_revision_id
-         where tr.thread_id = ?
-           and ks.summary_kind = 'llm_key_3line'
-         order by
-           case when ks.model = ? then 0 else 1 end,
-           tr.id desc,
-           ks.created_at desc
-         limit 1`,
-      )
-      .get(threadId, this.config.summaryModel) as
-      | {
-          summary_kind: string;
-          prompt_version: string;
-          model: string;
-          key_text: string;
-        }
-      | undefined;
-    if (!row) return null;
-    const text = normalizeKeySummaryDisplayText(row.key_text);
-    if (!text) return null;
-    return {
-      summaryKind: row.summary_kind,
-      promptVersion: row.prompt_version,
-      model: row.model,
-      text,
-    };
-  }
-
-  private getTopChangedFiles(threadId: number, limit: number): TuiThreadDetail['topFiles'] {
-    const latestRevision = this.db
-      .prepare(
-        `select id
-         from thread_revisions
-         where thread_id = ?
-         order by id desc
-         limit 1`,
-      )
-      .get(threadId) as { id: number } | undefined;
-    if (!latestRevision) return [];
-
-    return this.db
-      .prepare(
-        `select cf.path, cf.status, cf.additions, cf.deletions
-         from thread_code_snapshots cs
-         join thread_changed_files cf on cf.snapshot_id = cs.id
-         where cs.thread_revision_id = ?
-         order by (cf.additions + cf.deletions) desc, cf.path asc
-         limit ?`,
-      )
-      .all(latestRevision.id, limit) as TuiThreadDetail['topFiles'];
   }
 
   async rerunAction(request: ActionRequest): Promise<ActionResponse> {

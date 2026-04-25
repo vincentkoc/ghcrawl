@@ -101,10 +101,10 @@ import { readTextBlob } from './db/blob-store.js';
 import { blobStoreRoot, rawJsonStorage } from './db/raw-json-store.js';
 import { buildCanonicalDocument, isBotLikeAuthor } from './documents/normalize.js';
 import { buildDoctorResult } from './doctor.js';
+import { isEmbeddingContextError, parseEmbeddingContextError, shrinkEmbeddingTask } from './embedding/retry.js';
 import {
   activeVectorSourceKind,
   buildActiveVectorTask,
-  estimateEmbeddingTokens,
 } from './embedding/tasks.js';
 import { makeGitHubClient, type GitHubClient } from './github/client.js';
 import { OpenAiProvider, type AiProvider } from './openai/provider.js';
@@ -144,10 +144,7 @@ import {
   DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE,
   DURABLE_CLUSTER_REUSE_MIN_OVERLAP,
   EMBED_CONTEXT_RETRY_ATTEMPTS,
-  EMBED_CONTEXT_RETRY_FALLBACK_SHRINK_RATIO,
-  EMBED_CONTEXT_RETRY_TARGET_BUFFER_RATIO,
   EMBED_MAX_BATCH_TOKENS,
-  EMBED_TRUNCATION_MARKER,
   KEY_SUMMARY_CONCURRENCY,
   KEY_SUMMARY_MAX_BODY_CHARS,
   KEY_SUMMARY_MAX_UNREAD,
@@ -4488,28 +4485,6 @@ export class GHCrawlService {
     this.db.prepare('update threads set content_hash = ?, updated_at = ? where id = ?').run(canonical.contentHash, nowIso(), threadId);
   }
 
-  private parseEmbeddingContextError(error: unknown): { limitTokens: number | null; requestedTokens: number | null } | null {
-    const message = error instanceof Error ? error.message : String(error);
-    const requestedMatch = message.match(/requested\s+(\d+)\s+tokens/i);
-    const contextLimitMatch = message.match(/maximum context length is\s+(\d+)\s+tokens/i);
-    const inputLimitMatch = message.match(/maximum input length is\s+(\d+)\s+tokens/i);
-    const limitTokens = Number(contextLimitMatch?.[1] ?? inputLimitMatch?.[1] ?? NaN);
-    const requestedTokens = Number(requestedMatch?.[1] ?? NaN);
-
-    if (!Number.isFinite(limitTokens) && !Number.isFinite(requestedTokens)) {
-      return null;
-    }
-
-    return {
-      limitTokens: Number.isFinite(limitTokens) ? limitTokens : null,
-      requestedTokens: Number.isFinite(requestedTokens) ? requestedTokens : null,
-    };
-  }
-
-  private isEmbeddingContextError(error: unknown): boolean {
-    return this.parseEmbeddingContextError(error) !== null;
-  }
-
   private async embedBatchWithRecovery(
     ai: AiProvider,
     batch: ActiveVectorTask[],
@@ -4523,8 +4498,8 @@ export class GHCrawlService {
       });
       return batch.map((task, index) => ({ task, embedding: embeddings[index] }));
     } catch (error) {
-      if (!this.isEmbeddingContextError(error) || batch.length === 1) {
-        if (batch.length === 1 && this.isEmbeddingContextError(error)) {
+      if (!isEmbeddingContextError(error) || batch.length === 1) {
+        if (batch.length === 1 && isEmbeddingContextError(error)) {
           const recovered = await this.embedSingleTaskWithRecovery(ai, batch[0], onProgress);
           return [recovered];
         }
@@ -4559,12 +4534,12 @@ export class GHCrawlService {
         });
         return { task: current, embedding };
       } catch (error) {
-        const context = this.parseEmbeddingContextError(error);
+        const context = parseEmbeddingContextError(error);
         if (!context) {
           throw error;
         }
 
-        const next = this.shrinkEmbeddingTask(current, context);
+        const next = shrinkEmbeddingTask(current, { embedModel: this.config.embedModel, context });
         if (!next || next.text === current.text) {
           throw error;
         }
@@ -4576,56 +4551,6 @@ export class GHCrawlService {
     }
 
     throw new Error(`Unable to shrink embedding input for #${task.threadNumber}:${task.basis} below model limits`);
-  }
-
-  private shrinkEmbeddingTask(
-    task: ActiveVectorTask,
-    context?: { limitTokens: number | null; requestedTokens: number | null },
-  ): ActiveVectorTask | null {
-    const withoutMarker = task.text.endsWith(EMBED_TRUNCATION_MARKER)
-      ? task.text.slice(0, -EMBED_TRUNCATION_MARKER.length)
-      : task.text;
-    if (withoutMarker.length < 256) {
-      return null;
-    }
-
-    const nextLength = Math.max(
-      256,
-      this.projectEmbeddingRetryLength(withoutMarker.length, task.estimatedTokens, context),
-    );
-    if (nextLength >= withoutMarker.length) {
-      return null;
-    }
-    const nextText = `${withoutMarker.slice(0, Math.max(0, nextLength - EMBED_TRUNCATION_MARKER.length)).trimEnd()}${EMBED_TRUNCATION_MARKER}`;
-    return {
-      ...task,
-      text: nextText,
-      contentHash: stableContentHash(
-        `embedding:${ACTIVE_EMBED_PIPELINE_VERSION}:${task.basis}:${this.config.embedModel}:${ACTIVE_EMBED_DIMENSIONS}\n${nextText}`,
-      ),
-      estimatedTokens: estimateEmbeddingTokens(nextText),
-      wasTruncated: true,
-    };
-  }
-
-  private projectEmbeddingRetryLength(
-    textLength: number,
-    estimatedTokens: number,
-    context?: { limitTokens: number | null; requestedTokens: number | null },
-  ): number {
-    const limitTokens = context?.limitTokens ?? null;
-    const requestedTokens = context?.requestedTokens ?? null;
-    if (limitTokens && requestedTokens && requestedTokens > limitTokens) {
-      const targetRatio = (limitTokens * EMBED_CONTEXT_RETRY_TARGET_BUFFER_RATIO) / requestedTokens;
-      return Math.floor(textLength * Math.max(0.1, Math.min(targetRatio, EMBED_CONTEXT_RETRY_FALLBACK_SHRINK_RATIO)));
-    }
-
-    if (limitTokens && estimatedTokens > limitTokens) {
-      const targetRatio = (limitTokens * EMBED_CONTEXT_RETRY_TARGET_BUFFER_RATIO) / estimatedTokens;
-      return Math.floor(textLength * Math.max(0.1, Math.min(targetRatio, EMBED_CONTEXT_RETRY_FALLBACK_SHRINK_RATIO)));
-    }
-
-    return Math.floor(textLength * EMBED_CONTEXT_RETRY_FALLBACK_SHRINK_RATIO);
   }
 
   private chunkEmbeddingTasks(items: ActiveVectorTask[], maxItems: number, maxEstimatedTokens: number): ActiveVectorTask[][] {

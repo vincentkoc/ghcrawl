@@ -141,6 +141,7 @@ import { missingVectorStoreTarget, optimizeSqliteTarget } from './storage-mainte
 import { getSyncCursorState, writeSyncCursorState } from './sync/cursor.js';
 import { buildKeySummaryInputText, buildSummarySource } from './summary/source.js';
 import { clusterDisplayTitle, compareTuiClusterSummary, durableClosureReason, parseMemberThreadIdSet } from './tui/cluster-format.js';
+import { getTuiRepoStats } from './tui/repo-stats.js';
 import { getLatestTuiKeySummary, getTopChangedFiles, getTuiThreadSummaries } from './tui/thread-detail.js';
 import {
   ACTIVE_EMBED_DIMENSIONS,
@@ -188,7 +189,6 @@ import type {
   TuiClusterSortMode,
   TuiClusterSummary,
   TuiRefreshState,
-  TuiRepoStats,
   TuiSnapshot,
   TuiThreadDetail,
 } from './service-types.js';
@@ -2992,7 +2992,7 @@ export class GHCrawlService {
     includeClosedClusters?: boolean;
   }): TuiSnapshot {
     const repository = this.requireRepository(params.owner, params.repo);
-    const stats = this.getTuiRepoStats(repository.id);
+    const stats = getTuiRepoStats({ db: this.db, config: this.config, repoId: repository.id });
     const latestRun = getLatestClusterRun(this.db, repository.id);
     const includeClosedClusters = params.includeClosedClusters ?? true;
     const minSize = params.minSize ?? 1;
@@ -3262,36 +3262,6 @@ export class GHCrawlService {
         });
       }
     }
-  }
-
-  private getTuiRepoStats(repoId: number): TuiRepoStats {
-    const counts = this.db
-      .prepare(
-        `select kind, count(*) as count
-         from threads
-         where repo_id = ? and state = 'open' and closed_at_local is null
-         group by kind`,
-      )
-      .all(repoId) as Array<{ kind: 'issue' | 'pull_request'; count: number }>;
-    const latestRun = getLatestClusterRun(this.db, repoId);
-    const latestSync = (this.db
-      .prepare("select finished_at from sync_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
-      .get(repoId) as { finished_at: string | null } | undefined) ?? null;
-    const latestEmbed = (this.db
-      .prepare("select finished_at from embedding_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
-      .get(repoId) as { finished_at: string | null } | undefined) ?? null;
-    const embeddingWorkset = getEmbeddingWorkset({ db: this.db, config: this.config, repoId });
-    const staleThreadIds = new Set<number>(embeddingWorkset.pending.map((task) => task.threadId));
-    return {
-      openIssueCount: counts.find((row) => row.kind === 'issue')?.count ?? 0,
-      openPullRequestCount: counts.find((row) => row.kind === 'pull_request')?.count ?? 0,
-      lastGithubReconciliationAt: latestSync?.finished_at ?? null,
-      lastEmbedRefreshAt: latestEmbed?.finished_at ?? null,
-      staleEmbedThreadCount: staleThreadIds.size,
-      staleEmbedSourceCount: embeddingWorkset.pending.length,
-      latestClusterRunId: latestRun?.id ?? null,
-      latestClusterRunFinishedAt: latestRun?.finished_at ?? null,
-    };
   }
 
   private queryNearestWithRecovery(

@@ -296,14 +296,14 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
   },
   {
     name: 'clusters',
-    synopsis: 'clusters <owner/repo> [--min-size <count>] [--limit <count>] [--sort recent|size] [--search <text>] [--include-closed] [--json]',
+    synopsis: 'clusters <owner/repo> [--min-size <count>] [--limit <count>] [--sort recent|size] [--search <text>] [--hide-closed] [--json]',
     description: 'List local cluster summaries for one repository.',
     options: [
       '--min-size <count>  Minimum cluster size to return',
       '--limit <count>  Maximum number of clusters to return',
       '--sort recent|size  Sort by recency or cluster size',
       '--search <text>  Filter clusters by text',
-      '--include-closed  Include locally closed clusters',
+      '--hide-closed  Hide locally closed clusters',
       '--json  Emit machine-readable JSON output explicitly',
     ],
     examples: ['ghcrawl clusters openclaw/openclaw --min-size 10 --limit 20 --sort recent --json'],
@@ -311,13 +311,13 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
   },
   {
     name: 'cluster-detail',
-    synopsis: 'cluster-detail <owner/repo> --id <cluster-id> [--member-limit <count>] [--body-chars <count>] [--include-closed] [--json]',
+    synopsis: 'cluster-detail <owner/repo> --id <cluster-id> [--member-limit <count>] [--body-chars <count>] [--hide-closed] [--json]',
     description: 'Dump one local cluster and its members.',
     options: [
       '--id <cluster-id>  Cluster id to inspect',
       '--member-limit <count>  Limit member rows in the response',
       '--body-chars <count>  Limit body snippet size',
-      '--include-closed  Include locally closed clusters',
+      '--hide-closed  Hide locally closed clusters',
       '--json  Emit machine-readable JSON output explicitly',
     ],
     examples: ['ghcrawl cluster-detail openclaw/openclaw --id 123 --member-limit 20 --body-chars 280 --json'],
@@ -565,6 +565,7 @@ export function parseRepoFlags(command: CommandName, args: string[]): ParsedRepo
       'include-code': { type: 'boolean' },
       'full-reconcile': { type: 'boolean' },
       'include-closed': { type: 'boolean' },
+      'hide-closed': { type: 'boolean' },
       'include-inactive': { type: 'boolean' },
       kind: { type: 'string' },
       number: { type: 'string' },
@@ -1297,7 +1298,7 @@ export async function run(
           limit: typeof values.limit === 'string' ? parsePositiveInteger('limit', values.limit, 'clusters') : undefined,
           sort,
           search: typeof values.search === 'string' ? values.search : undefined,
-          includeClosed: values['include-closed'] === true,
+          includeClosed: values['hide-closed'] === true ? false : true,
         });
         writeJson(stdout, result);
         return;
@@ -1333,7 +1334,7 @@ export async function run(
             typeof values['body-chars'] === 'string'
               ? parsePositiveInteger('body-chars', values['body-chars'], 'cluster-detail')
               : undefined,
-          includeClosed: values['include-closed'] === true,
+          includeClosed: values['hide-closed'] === true ? false : true,
         });
         writeJson(stdout, result);
         return;

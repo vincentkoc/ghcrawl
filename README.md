@@ -207,17 +207,18 @@ ghcrawl threads owner/repo --numbers 42,43,44 --include-closed --json
 ghcrawl close-thread owner/repo --number 42 --json
 ghcrawl close-cluster owner/repo --id 123 --json
 ghcrawl clusters owner/repo --min-size 10 --limit 20 --json
-ghcrawl clusters owner/repo --min-size 10 --limit 20 --include-closed --json
+ghcrawl clusters owner/repo --min-size 10 --limit 20 --json
+ghcrawl clusters owner/repo --min-size 10 --hide-closed --json
 ghcrawl durable-clusters owner/repo --member-limit 10 --json
 ghcrawl cluster-detail owner/repo --id 123 --json
-ghcrawl cluster-detail owner/repo --id 123 --include-closed --json
+ghcrawl cluster-detail owner/repo --id 123 --hide-closed --json
 ghcrawl cluster-explain owner/repo --id 123 --member-limit 20 --event-limit 50 --json
 ghcrawl search owner/repo --query "download stalls" --json
 ```
 
 Use `threads --numbers ...` when you want several specific issue or PR records in one CLI call instead of paying process startup overhead repeatedly.
 
-By default, JSON list commands filter out locally closed issues/PRs and completely closed clusters. Use `--include-closed` when you need to inspect those records too.
+By default, cluster JSON commands show locally closed clusters. Use `--hide-closed` when you only want active clusters. Thread list commands still hide locally closed issues/PRs unless `--include-closed` is passed.
 
 Use `close-thread` when you know a local issue/PR should be treated as closed before the next GitHub sync catches up. If that was the last open item in its cluster, `ghcrawl` automatically marks the cluster closed too.
 
@@ -278,7 +279,7 @@ The skill is built around the stable JSON CLI surface and is intentionally conse
 - default mode assumes no valid API keys and stays read-only
 - API-backed operations only need the relevant bare token in env, `.env.local`, or config JSON
 - even then, `refresh`, `sync`, `embed`, and `cluster` should only run when the user explicitly asks for them
-- JSON list commands hide locally closed issues/PRs and closed clusters by default unless `--include-closed` is passed
+- cluster JSON commands show closed clusters by default; use `--hide-closed` for active-only cluster views
 
 ```bash
 ghcrawl doctor --json

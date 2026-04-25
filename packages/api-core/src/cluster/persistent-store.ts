@@ -397,7 +397,10 @@ export function upsertClusterGroup(
      ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
      on conflict(repo_id, stable_key) do update set
        stable_slug = excluded.stable_slug,
-       status = excluded.status,
+       status = case
+         when cluster_groups.status <> 'active' and excluded.status = 'active' then cluster_groups.status
+         else excluded.status
+       end,
        cluster_type = excluded.cluster_type,
        representative_thread_id = excluded.representative_thread_id,
        title = excluded.title,

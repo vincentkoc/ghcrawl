@@ -3872,18 +3872,17 @@ test('local thread closure updates default thread filters and auto-closes fully 
     assert.equal(secondClose.ok, true);
     assert.equal(secondClose.clusterClosed, true);
 
-    const summaries = service.listClusterSummaries({ owner: 'openclaw', repo: 'openclaw', minSize: 0 });
-    assert.equal(summaries.clusters.length, 0);
+    const hiddenSummaries = service.listClusterSummaries({ owner: 'openclaw', repo: 'openclaw', minSize: 0, includeClosed: false });
+    assert.equal(hiddenSummaries.clusters.length, 0);
 
-    const summariesWithClosed = service.listClusterSummaries({
+    const summaries = service.listClusterSummaries({
       owner: 'openclaw',
       repo: 'openclaw',
       minSize: 0,
-      includeClosed: true,
     });
-    assert.equal(summariesWithClosed.clusters.length, 1);
-    assert.equal(summariesWithClosed.clusters[0]?.isClosed, true);
-    assert.equal(summariesWithClosed.clusters[0]?.closeReasonLocal, 'all_members_closed');
+    assert.equal(summaries.clusters.length, 1);
+    assert.equal(summaries.clusters[0]?.isClosed, true);
+    assert.equal(summaries.clusters[0]?.closeReasonLocal, 'all_members_closed');
 
     const snapshot = service.getTuiSnapshot({ owner: 'openclaw', repo: 'openclaw', minSize: 0 });
     assert.equal(snapshot.clusters.length, 1);
@@ -3893,7 +3892,7 @@ test('local thread closure updates default thread filters and auto-closes fully 
   }
 });
 
-test('manual cluster closure is hidden from JSON summaries by default but remains visible in the tui snapshot', () => {
+test('manual cluster closure is shown by default and can be hidden from JSON summaries', () => {
   const service = makeTestService({
     getRepo: async () => ({}),
     listRepositoryIssues: async () => [],
@@ -3939,7 +3938,8 @@ test('manual cluster closure is hidden from JSON summaries by default but remain
     assert.equal(response.ok, true);
     assert.equal(response.clusterClosed, true);
 
-    assert.equal(service.listClusterSummaries({ owner: 'openclaw', repo: 'openclaw', minSize: 0 }).clusters.length, 0);
+    assert.equal(service.listClusterSummaries({ owner: 'openclaw', repo: 'openclaw', minSize: 0, includeClosed: false }).clusters.length, 0);
+    assert.equal(service.listClusterSummaries({ owner: 'openclaw', repo: 'openclaw', minSize: 0 }).clusters.length, 1);
     const detail = service.getClusterDetailDump({
       owner: 'openclaw',
       repo: 'openclaw',
@@ -3953,6 +3953,76 @@ test('manual cluster closure is hidden from JSON summaries by default but remain
     assert.equal(snapshot.clusters.length, 1);
     assert.equal(snapshot.clusters[0]?.isClosed, true);
     assert.equal(snapshot.clusters[0]?.closeReasonLocal, 'manual');
+  } finally {
+    service.close();
+  }
+});
+
+test('tui snapshot includes durable closed clusters missing from the latest run', () => {
+  const service = makeTestService({
+    getRepo: async () => ({}),
+    listRepositoryIssues: async () => [],
+    getIssue: async () => ({}),
+    getPull: async () => ({}),
+    listIssueComments: async () => [],
+    listPullReviews: async () => [],
+    listPullReviewComments: async () => [],
+    listPullFiles: async () => [],
+  });
+
+  try {
+    const now = '2026-03-10T12:00:00Z';
+    service.db
+      .prepare(
+        `insert into repositories (id, owner, name, full_name, github_repo_id, raw_json, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(1, 'openclaw', 'openclaw', 'openclaw/openclaw', '1', '{}', now);
+    service.db
+      .prepare(
+        `insert into threads (
+          id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+          labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh, closed_at_gh,
+          merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(10, 1, '100', 42, 'issue', 'closed', 'Closed durable issue', 'body', 'alice', 'User', 'https://github.com/openclaw/openclaw/issues/42', '[]', '[]', '{}', 'hash-42', 0, now, now, now, null, now, now, now);
+    service.db
+      .prepare(`insert into cluster_runs (id, repo_id, scope, status, started_at, finished_at) values (?, ?, ?, ?, ?, ?)`)
+      .run(1, 1, 'openclaw/openclaw', 'completed', now, now);
+    service.db
+      .prepare(
+        `insert into cluster_groups (
+          id, repo_id, stable_key, stable_slug, status, cluster_type, representative_thread_id, title, created_at, updated_at, closed_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(7, 1, 'stable-key', 'trace-alpha-river', 'closed', 'duplicate_candidate', 10, 'Closed durable cluster', now, now, now);
+    service.db
+      .prepare(
+        `insert into cluster_memberships (
+          cluster_id, thread_id, role, state, score_to_representative, first_seen_run_id, last_seen_run_id,
+          added_by, removed_by, added_reason_json, removed_reason_json, created_at, updated_at, removed_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(7, 10, 'canonical', 'active', 1, null, null, 'algo', null, '{}', null, now, now, null);
+
+    const hidden = service.getTuiSnapshot({ owner: 'openclaw', repo: 'openclaw', minSize: 0, includeClosedClusters: false });
+    assert.equal(hidden.clusters.length, 0);
+
+    const snapshot = service.getTuiSnapshot({ owner: 'openclaw', repo: 'openclaw', minSize: 0 });
+    assert.equal(snapshot.clusters.length, 1);
+    assert.equal(snapshot.clusters[0]?.clusterId, 7);
+    assert.equal(snapshot.clusters[0]?.isClosed, true);
+    assert.equal(snapshot.clusters[0]?.closeReasonLocal, 'closed');
+
+    const detail = service.getTuiClusterDetail({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      clusterId: 7,
+      clusterRunId: snapshot.clusterRunId ?? undefined,
+    });
+    assert.equal(detail.members.length, 1);
+    assert.equal(detail.members[0]?.number, 42);
   } finally {
     service.close();
   }

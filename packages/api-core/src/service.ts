@@ -191,6 +191,12 @@ type ActiveVectorRow = ThreadRow & {
   vector_backend: string;
 };
 
+type DurableTuiClosure = {
+  clusterId: number;
+  status: 'active' | 'closed' | 'merged' | 'split';
+  closedAt: string | null;
+};
+
 type RepoPipelineStateRow = {
   repo_id: number;
   summary_model: string;
@@ -878,8 +884,8 @@ export class GHCrawlService {
     }
 
     const row = this.db
-      .prepare('select id from clusters where repo_id = ? and cluster_run_id = ? and id = ? limit 1')
-      .get(repository.id, latestRun.id, params.clusterId) as { id: number } | undefined;
+      .prepare('select id, representative_thread_id from clusters where repo_id = ? and cluster_run_id = ? and id = ? limit 1')
+      .get(repository.id, latestRun.id, params.clusterId) as { id: number; representative_thread_id: number | null } | undefined;
     if (!row) {
       throw new Error(`Cluster ${params.clusterId} was not found for ${repository.fullName}.`);
     }
@@ -893,6 +899,7 @@ export class GHCrawlService {
          where id = ?`,
       )
       .run(closedAt, row.id);
+    this.markDurableClusterClosedByRepresentative(repository.id, row.representative_thread_id ?? null, closedAt, 'manual');
 
     return closeResponseSchema.parse({
       ok: true,
@@ -2882,7 +2889,7 @@ export class GHCrawlService {
 
     return clustersResponseSchema.parse({
       repository,
-      clusters: clusterValues.filter((cluster) => (params.includeClosed ? true : !cluster.isClosed)),
+      clusters: clusterValues.filter((cluster) => (params.includeClosed ?? true ? true : !cluster.isClosed)),
     });
   }
 
@@ -3231,7 +3238,7 @@ export class GHCrawlService {
       minSize: params.minSize,
       sort: params.sort,
       search: params.search,
-      includeClosedClusters: params.includeClosed === true,
+      includeClosedClusters: params.includeClosed ?? true,
     });
     const clusters = params.limit ? snapshot.clusters.slice(0, params.limit) : snapshot.clusters;
     return clusterSummariesResponseSchema.parse({
@@ -3266,7 +3273,7 @@ export class GHCrawlService {
       owner: params.owner,
       repo: params.repo,
       minSize: 0,
-      includeClosedClusters: params.includeClosed === true,
+      includeClosedClusters: params.includeClosed ?? true,
     });
     const cluster = snapshot.clusters.find((item) => item.clusterId === params.clusterId);
     if (!cluster) {
@@ -3328,12 +3335,17 @@ export class GHCrawlService {
     const repository = this.requireRepository(params.owner, params.repo);
     const stats = this.getTuiRepoStats(repository.id);
     const latestRun = this.getLatestClusterRun(repository.id);
-    if (!latestRun) {
-      return { repository, stats, clusterRunId: null, clusters: [] };
-    }
-
     const includeClosedClusters = params.includeClosedClusters ?? true;
-    const clusters = this.listRawTuiClusters(repository.id, latestRun.id)
+    const rawClusters = latestRun ? this.listRawTuiClusters(repository.id, latestRun.id) : [];
+    const representedThreadIds = new Set(
+      rawClusters
+        .map((cluster) => cluster.representativeThreadId)
+        .filter((threadId): threadId is number => threadId !== null),
+    );
+    const durableClosedClusters = includeClosedClusters
+      ? this.listClosedDurableTuiClusters(repository.id, representedThreadIds)
+      : [];
+    const clusters = [...rawClusters, ...durableClosedClusters]
       .filter((cluster) => (includeClosedClusters ? true : !cluster.isClosed))
       .filter((cluster) => cluster.totalCount >= (params.minSize ?? 1))
       .filter((cluster) => {
@@ -3346,7 +3358,7 @@ export class GHCrawlService {
     return {
       repository,
       stats,
-      clusterRunId: latestRun.id,
+      clusterRunId: latestRun?.id ?? null,
       clusters,
     };
   }
@@ -3410,27 +3422,52 @@ export class GHCrawlService {
     const clusterRunId =
       params.clusterRunId ??
       (this.getLatestClusterRun(repository.id)?.id ?? null);
-    if (!clusterRunId) {
-      throw new Error(`No completed cluster run found for ${repository.fullName}. Run cluster first.`);
-    }
 
-    const summary = this.getRawTuiClusterSummary(repository.id, clusterRunId, params.clusterId);
-    if (!summary) {
+    const summary = clusterRunId ? this.getRawTuiClusterSummary(repository.id, clusterRunId, params.clusterId) : null;
+    const durableSummary = summary ? null : this.getDurableTuiClusterSummary(repository.id, params.clusterId);
+    const resolvedSummary = summary ?? durableSummary;
+    if (!resolvedSummary) {
       throw new Error(`Cluster ${params.clusterId} was not found for ${repository.fullName}.`);
     }
 
-    const rows = this.db
-      .prepare(
-        `select t.id, t.number, t.kind, t.state, t.closed_at_local, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
-         from cluster_members cm
-         join threads t on t.id = cm.thread_id
-         where cm.cluster_id = ?
-         order by
-           case t.kind when 'issue' then 0 else 1 end asc,
-           coalesce(t.updated_at_gh, t.updated_at) desc,
-           t.number desc`,
-      )
-      .all(params.clusterId) as Array<{
+    const rows = summary
+      ? (this.db
+          .prepare(
+            `select t.id, t.number, t.kind, t.state, t.closed_at_local, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
+             from cluster_members cm
+             join threads t on t.id = cm.thread_id
+             where cm.cluster_id = ?
+             order by
+               case t.kind when 'issue' then 0 else 1 end asc,
+               coalesce(t.updated_at_gh, t.updated_at) desc,
+               t.number desc`,
+          )
+          .all(params.clusterId) as Array<{
+          id: number;
+          number: number;
+          kind: 'issue' | 'pull_request';
+          state: string;
+          closed_at_local: string | null;
+          title: string;
+          updated_at_gh: string | null;
+          html_url: string;
+          labels_json: string;
+          score_to_representative: number | null;
+        }>)
+      : (this.db
+          .prepare(
+            `select t.id, t.number, t.kind, t.state, t.closed_at_local, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
+             from cluster_memberships cm
+             join threads t on t.id = cm.thread_id
+             where cm.cluster_id = ?
+               and cm.state <> 'removed_by_user'
+             order by
+               case cm.role when 'canonical' then 0 else 1 end asc,
+               case t.kind when 'issue' then 0 else 1 end asc,
+               coalesce(t.updated_at_gh, t.updated_at) desc,
+               t.number desc`,
+          )
+          .all(params.clusterId) as Array<{
         id: number;
         number: number;
         kind: 'issue' | 'pull_request';
@@ -3441,21 +3478,21 @@ export class GHCrawlService {
         html_url: string;
         labels_json: string;
         score_to_representative: number | null;
-      }>;
+      }>);
 
     return {
-      clusterId: summary.clusterId,
-      displayTitle: summary.displayTitle,
-      isClosed: summary.isClosed,
-      closedAtLocal: summary.closedAtLocal,
-      closeReasonLocal: summary.closeReasonLocal,
-      totalCount: summary.totalCount,
-      issueCount: summary.issueCount,
-      pullRequestCount: summary.pullRequestCount,
-      latestUpdatedAt: summary.latestUpdatedAt,
-      representativeThreadId: summary.representativeThreadId,
-      representativeNumber: summary.representativeNumber,
-      representativeKind: summary.representativeKind,
+      clusterId: resolvedSummary.clusterId,
+      displayTitle: resolvedSummary.displayTitle,
+      isClosed: resolvedSummary.isClosed,
+      closedAtLocal: resolvedSummary.closedAtLocal,
+      closeReasonLocal: resolvedSummary.closeReasonLocal,
+      totalCount: resolvedSummary.totalCount,
+      issueCount: resolvedSummary.issueCount,
+      pullRequestCount: resolvedSummary.pullRequestCount,
+      latestUpdatedAt: resolvedSummary.latestUpdatedAt,
+      representativeThreadId: resolvedSummary.representativeThreadId,
+      representativeNumber: resolvedSummary.representativeNumber,
+      representativeKind: resolvedSummary.representativeKind,
       members: rows.map((row) => ({
         id: row.id,
         number: row.number,
@@ -4120,7 +4157,12 @@ export class GHCrawlService {
         continue;
       }
       if (row.member_count > 0 && row.closed_member_count >= row.member_count) {
-        const result = markClosed.run(nowIso(), clusterId);
+        const closedAt = nowIso();
+        const result = markClosed.run(closedAt, clusterId);
+        const cluster = this.db.prepare('select representative_thread_id from clusters where id = ? limit 1').get(clusterId) as
+          | { representative_thread_id: number | null }
+          | undefined;
+        this.markDurableClusterClosedByRepresentative(repoId, cluster?.representative_thread_id ?? null, closedAt, 'all_members_closed');
         changed += result.changes;
         continue;
       }
@@ -4129,6 +4171,242 @@ export class GHCrawlService {
     }
 
     return changed;
+  }
+
+  private markDurableClusterClosedByRepresentative(
+    repoId: number,
+    representativeThreadId: number | null,
+    closedAt: string,
+    reason: string,
+  ): void {
+    if (representativeThreadId === null) return;
+    const identity = humanKeyForValue(`repo:${repoId}:cluster-representative:${representativeThreadId}`);
+    const durable = this.db
+      .prepare('select id from cluster_groups where repo_id = ? and stable_key = ? limit 1')
+      .get(repoId, identity.hash) as { id: number } | undefined;
+    if (!durable) return;
+
+    this.db
+      .prepare(
+        `update cluster_groups
+         set status = 'closed',
+             closed_at = coalesce(closed_at, ?),
+             updated_at = ?
+         where id = ?`,
+      )
+      .run(closedAt, closedAt, durable.id);
+    recordClusterEvent(this.db, {
+      clusterId: durable.id,
+      eventType: 'close_cluster',
+      actorKind: reason === 'manual' ? 'user' : 'algo',
+      payload: {
+        representativeThreadId,
+        reason,
+      },
+    });
+  }
+
+  private durableClosureReason(closure: DurableTuiClosure): string {
+    return closure.status === 'active' ? 'closed' : closure.status;
+  }
+
+  private getDurableClosuresByRepresentative(repoId: number, representativeThreadIds: number[]): Map<number, DurableTuiClosure> {
+    const uniqueThreadIds = Array.from(new Set(representativeThreadIds));
+    if (uniqueThreadIds.length === 0) {
+      return new Map();
+    }
+
+    const identities = uniqueThreadIds.map((threadId) => ({
+      threadId,
+      stableKey: humanKeyForValue(`repo:${repoId}:cluster-representative:${threadId}`).hash,
+    }));
+    const placeholders = identities.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `select id, stable_key, status, closed_at
+         from cluster_groups
+         where repo_id = ?
+           and stable_key in (${placeholders})
+           and (status <> 'active' or closed_at is not null)`,
+      )
+      .all(repoId, ...identities.map((identity) => identity.stableKey)) as Array<{
+      id: number;
+      stable_key: string;
+      status: 'active' | 'closed' | 'merged' | 'split';
+      closed_at: string | null;
+    }>;
+    const threadIdByStableKey = new Map(identities.map((identity) => [identity.stableKey, identity.threadId]));
+    const closures = new Map<number, DurableTuiClosure>();
+    for (const row of rows) {
+      const threadId = threadIdByStableKey.get(row.stable_key);
+      if (threadId === undefined) continue;
+      closures.set(threadId, {
+        clusterId: row.id,
+        status: row.status,
+        closedAt: row.closed_at,
+      });
+    }
+    return closures;
+  }
+
+  private listClosedDurableTuiClusters(repoId: number, representedThreadIds: Set<number>): TuiClusterSummary[] {
+    const rows = this.db
+      .prepare(
+        `select
+            cg.id as cluster_id,
+            cg.stable_slug,
+            cg.status,
+            cg.closed_at,
+            cg.representative_thread_id,
+            cg.title,
+            rt.number as representative_number,
+            rt.kind as representative_kind,
+            rt.title as representative_title,
+            count(*) as member_count,
+            max(coalesce(t.updated_at_gh, t.updated_at)) as latest_updated_at,
+            sum(case when t.kind = 'issue' then 1 else 0 end) as issue_count,
+            sum(case when t.kind = 'pull_request' then 1 else 0 end) as pull_request_count,
+            group_concat(lower(coalesce(t.title, '')), ' ') as search_text
+         from cluster_groups cg
+         left join threads rt on rt.id = cg.representative_thread_id
+         join cluster_memberships cm on cm.cluster_id = cg.id and cm.state <> 'removed_by_user'
+         join threads t on t.id = cm.thread_id
+         where cg.repo_id = ?
+           and (cg.status <> 'active' or cg.closed_at is not null)
+         group by
+           cg.id,
+           cg.stable_slug,
+           cg.status,
+           cg.closed_at,
+           cg.representative_thread_id,
+           cg.title,
+           rt.number,
+           rt.kind,
+           rt.title`,
+      )
+      .all(repoId) as Array<{
+      cluster_id: number;
+      stable_slug: string;
+      status: 'active' | 'closed' | 'merged' | 'split';
+      closed_at: string | null;
+      representative_thread_id: number | null;
+      title: string | null;
+      representative_number: number | null;
+      representative_kind: 'issue' | 'pull_request' | null;
+      representative_title: string | null;
+      member_count: number;
+      latest_updated_at: string | null;
+      issue_count: number;
+      pull_request_count: number;
+      search_text: string | null;
+    }>;
+
+    return rows
+      .filter((row) => row.representative_thread_id === null || !representedThreadIds.has(row.representative_thread_id))
+      .map((row) =>
+        this.durableTuiSummaryFromRow({
+          ...row,
+          representative_title: row.representative_title ?? row.title,
+        }),
+      );
+  }
+
+  private getDurableTuiClusterSummary(repoId: number, clusterId: number): TuiClusterSummary | null {
+    const row = this.db
+      .prepare(
+        `select
+            cg.id as cluster_id,
+            cg.stable_slug,
+            cg.status,
+            cg.closed_at,
+            cg.representative_thread_id,
+            cg.title,
+            rt.number as representative_number,
+            rt.kind as representative_kind,
+            rt.title as representative_title,
+            count(*) as member_count,
+            max(coalesce(t.updated_at_gh, t.updated_at)) as latest_updated_at,
+            sum(case when t.kind = 'issue' then 1 else 0 end) as issue_count,
+            sum(case when t.kind = 'pull_request' then 1 else 0 end) as pull_request_count,
+            group_concat(lower(coalesce(t.title, '')), ' ') as search_text
+         from cluster_groups cg
+         left join threads rt on rt.id = cg.representative_thread_id
+         join cluster_memberships cm on cm.cluster_id = cg.id and cm.state <> 'removed_by_user'
+         join threads t on t.id = cm.thread_id
+         where cg.repo_id = ?
+           and cg.id = ?
+         group by
+           cg.id,
+           cg.stable_slug,
+           cg.status,
+           cg.closed_at,
+           cg.representative_thread_id,
+           cg.title,
+           rt.number,
+           rt.kind,
+           rt.title`,
+      )
+      .get(repoId, clusterId) as
+      | {
+          cluster_id: number;
+          stable_slug: string;
+          status: 'active' | 'closed' | 'merged' | 'split';
+          closed_at: string | null;
+          representative_thread_id: number | null;
+          title: string | null;
+          representative_number: number | null;
+          representative_kind: 'issue' | 'pull_request' | null;
+          representative_title: string | null;
+          member_count: number;
+          latest_updated_at: string | null;
+          issue_count: number;
+          pull_request_count: number;
+          search_text: string | null;
+        }
+      | undefined;
+    if (!row) return null;
+    return this.durableTuiSummaryFromRow({
+      ...row,
+      representative_title: row.representative_title ?? row.title,
+    });
+  }
+
+  private durableTuiSummaryFromRow(row: {
+    cluster_id: number;
+    stable_slug: string;
+    status: 'active' | 'closed' | 'merged' | 'split';
+    closed_at: string | null;
+    representative_thread_id: number | null;
+    representative_number: number | null;
+    representative_kind: 'issue' | 'pull_request' | null;
+    representative_title: string | null;
+    member_count: number;
+    latest_updated_at: string | null;
+    issue_count: number;
+    pull_request_count: number;
+    search_text: string | null;
+  }): TuiClusterSummary {
+    const closure: DurableTuiClosure = {
+      clusterId: row.cluster_id,
+      status: row.status,
+      closedAt: row.closed_at,
+    };
+    const isClosed = row.status !== 'active' || row.closed_at !== null;
+    return {
+      clusterId: row.cluster_id,
+      displayTitle: this.clusterDisplayTitle(row.stable_slug, row.representative_title, row.cluster_id),
+      isClosed,
+      closedAtLocal: row.closed_at,
+      closeReasonLocal: isClosed ? this.durableClosureReason(closure) : null,
+      totalCount: row.member_count,
+      issueCount: row.issue_count,
+      pullRequestCount: row.pull_request_count,
+      latestUpdatedAt: row.latest_updated_at,
+      representativeThreadId: row.representative_thread_id,
+      representativeNumber: row.representative_number,
+      representativeKind: row.representative_kind,
+      searchText: `${row.stable_slug} ${(row.representative_title ?? '').toLowerCase()} ${row.search_text ?? ''}`.trim(),
+    };
   }
 
   private listRawTuiClusters(repoId: number, clusterRunId: number): TuiClusterSummary[] {
@@ -4178,15 +4456,23 @@ export class GHCrawlService {
         closed_member_count: number;
         search_text: string | null;
       }>;
+    const durableClosures = this.getDurableClosuresByRepresentative(
+      repoId,
+      rows
+        .map((row) => row.representative_thread_id)
+        .filter((threadId): threadId is number => threadId !== null),
+    );
 
     return rows.map((row) => {
       const clusterName = this.clusterHumanName(repoId, row.representative_thread_id, row.cluster_id);
+      const durableClosure =
+        row.representative_thread_id === null ? null : (durableClosures.get(row.representative_thread_id) ?? null);
       return {
         clusterId: row.cluster_id,
         displayTitle: this.clusterDisplayTitle(clusterName, row.representative_title, row.cluster_id),
-        isClosed: row.close_reason_local !== null || row.closed_member_count >= row.member_count,
-        closedAtLocal: row.closed_at_local,
-        closeReasonLocal: row.close_reason_local,
+        isClosed: row.close_reason_local !== null || durableClosure !== null || row.closed_member_count >= row.member_count,
+        closedAtLocal: row.closed_at_local ?? durableClosure?.closedAt ?? null,
+        closeReasonLocal: row.close_reason_local ?? (durableClosure ? this.durableClosureReason(durableClosure) : null),
         totalCount: row.member_count,
         issueCount: row.issue_count,
         pullRequestCount: row.pull_request_count,
@@ -4254,12 +4540,16 @@ export class GHCrawlService {
     }
 
     const clusterName = this.clusterHumanName(repoId, row.representative_thread_id, row.cluster_id);
+    const durableClosure =
+      row.representative_thread_id === null
+        ? null
+        : (this.getDurableClosuresByRepresentative(repoId, [row.representative_thread_id]).get(row.representative_thread_id) ?? null);
     return {
       clusterId: row.cluster_id,
       displayTitle: this.clusterDisplayTitle(clusterName, row.representative_title, row.cluster_id),
-      isClosed: row.close_reason_local !== null || row.closed_member_count >= row.member_count,
-      closedAtLocal: row.closed_at_local,
-      closeReasonLocal: row.close_reason_local,
+      isClosed: row.close_reason_local !== null || durableClosure !== null || row.closed_member_count >= row.member_count,
+      closedAtLocal: row.closed_at_local ?? durableClosure?.closedAt ?? null,
+      closeReasonLocal: row.close_reason_local ?? (durableClosure ? this.durableClosureReason(durableClosure) : null),
       totalCount: row.member_count,
       issueCount: row.issue_count,
       pullRequestCount: row.pull_request_count,

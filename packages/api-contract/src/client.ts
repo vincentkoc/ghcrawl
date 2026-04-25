@@ -119,7 +119,7 @@ export function createGitcrawlClient(baseUrl: string, fetchImpl: FetchLike = fet
     },
     async listClusters(params) {
       const search = new URLSearchParams({ owner: params.owner, repo: params.repo });
-      if (params.includeClosed) search.set('includeClosed', 'true');
+      if (params.includeClosed !== undefined) search.set('includeClosed', String(params.includeClosed));
       const res = await fetchImpl(`${normalized}/clusters?${search.toString()}`);
       return readJson(res, clustersResponseSchema);
     },
@@ -129,7 +129,7 @@ export function createGitcrawlClient(baseUrl: string, fetchImpl: FetchLike = fet
       if (params.limit !== undefined) search.set('limit', String(params.limit));
       if (params.sort) search.set('sort', params.sort);
       if (params.search) search.set('search', params.search);
-      if (params.includeClosed) search.set('includeClosed', 'true');
+      if (params.includeClosed !== undefined) search.set('includeClosed', String(params.includeClosed));
       const res = await fetchImpl(`${normalized}/cluster-summaries?${search.toString()}`);
       return readJson(res, clusterSummariesResponseSchema);
     },
@@ -141,7 +141,7 @@ export function createGitcrawlClient(baseUrl: string, fetchImpl: FetchLike = fet
       });
       if (params.memberLimit !== undefined) search.set('memberLimit', String(params.memberLimit));
       if (params.bodyChars !== undefined) search.set('bodyChars', String(params.bodyChars));
-      if (params.includeClosed) search.set('includeClosed', 'true');
+      if (params.includeClosed !== undefined) search.set('includeClosed', String(params.includeClosed));
       const res = await fetchImpl(`${normalized}/cluster-detail?${search.toString()}`);
       return readJson(res, clusterDetailResponseSchema);
     },

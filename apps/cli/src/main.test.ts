@@ -607,6 +607,36 @@ test('cluster command forwards neighborhood refresh inputs', async () => {
   assert.match(stdout.read(), /"edges": 3/);
 });
 
+test('clusters command shows closed clusters by default and forwards hide-closed', async () => {
+  const stdout = createWritableCapture();
+  const context = makeRunContext();
+  const original = GHCrawlService.prototype.listClusterSummaries;
+  const received: unknown[] = [];
+
+  GHCrawlService.prototype.listClusterSummaries = function listClusterSummariesStub(params: unknown) {
+    received.push(params);
+    return { repository: { fullName: 'openclaw/openclaw' }, stats: {}, clusters: [] } as never;
+  };
+
+  try {
+    await run(['clusters', 'openclaw/openclaw', '--min-size', '5'], stdout.stream, {
+      env: context.env,
+      cwd: context.cwd,
+    });
+    await run(['clusters', 'openclaw/openclaw', '--hide-closed'], stdout.stream, {
+      env: context.env,
+      cwd: context.cwd,
+    });
+  } finally {
+    GHCrawlService.prototype.listClusterSummaries = original;
+    context.cleanup();
+  }
+
+  assert.equal((received[0] as { includeClosed?: boolean }).includeClosed, true);
+  assert.equal((received[0] as { minSize?: number }).minSize, 5);
+  assert.equal((received[1] as { includeClosed?: boolean }).includeClosed, false);
+});
+
 test('durable-clusters command forwards stable cluster list options', async () => {
   const stdout = createWritableCapture();
   const context = makeRunContext();
@@ -837,6 +867,13 @@ test('parseRepoFlags accepts include-closed boolean flag', () => {
   assert.equal(parsed.owner, 'openclaw');
   assert.equal(parsed.repo, 'openclaw');
   assert.equal(parsed.values['include-closed'], true);
+});
+
+test('parseRepoFlags accepts hide-closed cluster flag', () => {
+  const parsed = parseRepoFlags('clusters', ['openclaw/openclaw', '--hide-closed']);
+  assert.equal(parsed.owner, 'openclaw');
+  assert.equal(parsed.repo, 'openclaw');
+  assert.equal(parsed.values['hide-closed'], true);
 });
 
 test('parseRepoFlags accepts include-inactive durable cluster flag', () => {

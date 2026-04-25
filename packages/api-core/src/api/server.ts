@@ -126,7 +126,7 @@ export function createApiServer(service: GHCrawlService): http.Server {
 
       if (req.method === 'GET' && url.pathname === '/clusters') {
         const params = parseRepoParams(url);
-        const includeClosed = url.searchParams.get('includeClosed') === 'true';
+        const includeClosed = url.searchParams.get('includeClosed') !== 'false';
         sendJson(res, 200, service.listClusters({ ...params, includeClosed }));
         return;
       }
@@ -154,7 +154,7 @@ export function createApiServer(service: GHCrawlService): http.Server {
         const minSizeValue = url.searchParams.get('minSize');
         const limitValue = url.searchParams.get('limit');
         const search = url.searchParams.get('search') ?? undefined;
-        const includeClosed = url.searchParams.get('includeClosed') === 'true';
+        const includeClosed = url.searchParams.get('includeClosed') !== 'false';
         sendJson(
           res,
           200,
@@ -184,7 +184,7 @@ export function createApiServer(service: GHCrawlService): http.Server {
         }
         const memberLimitValue = url.searchParams.get('memberLimit');
         const bodyCharsValue = url.searchParams.get('bodyChars');
-        const includeClosed = url.searchParams.get('includeClosed') === 'true';
+        const includeClosed = url.searchParams.get('includeClosed') !== 'false';
         sendJson(
           res,
           200,

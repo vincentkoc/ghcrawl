@@ -225,12 +225,25 @@ The main SQLite database is a local cache and can grow large because it stores r
 Use `export-sync` to write a compact portable core DB:
 
 ```bash
-ghcrawl export-sync owner/repo --output ./owner__repo.sync.db --json
+ghcrawl export-sync owner/repo --profile lean --manifest --output ./owner__repo.sync.db --json
+ghcrawl validate-sync ./owner__repo.sync.db --json
+ghcrawl portable-size ./owner__repo.sync.db --json
+ghcrawl sync-status owner/repo --portable ./owner__repo.sync.db --json
 ```
 
 The export keeps the syncable state: repository metadata, issue/PR metadata, bounded body excerpts, latest revisions, deterministic fingerprints, LLM key summaries, sync/pipeline state, and durable cluster identities/memberships/overrides. It intentionally excludes bulky or rebuildable caches such as raw JSON blobs, comments, documents/FTS, vectors, code snapshots, cluster event history, run logs, and similarity edge evidence.
 
-Default body excerpts are capped at `512` characters per thread. Raise or lower that with `--body-chars <count>` depending on how much preview text you want in the portable file.
+Default body excerpts are capped at `512` characters per thread. Use `--profile lean` for a smaller `256` character excerpt budget, `--profile review` for `1024`, or `--body-chars <count>` when you need an explicit value. `--manifest` writes a JSON sidecar with the export SHA256, table counts, validation status, profile, and repository identity.
+
+Use `import-sync` to hydrate a configured local store from a portable DB:
+
+```bash
+ghcrawl import-sync ./owner__repo.sync.db --json
+```
+
+Import preserves richer existing live-cache data where possible. For example, an existing full thread body is not replaced by a portable excerpt, and raw GitHub JSON is not invented beyond a minimal placeholder for newly imported rows.
+
+External CI or worker systems should call these commands from outside this repository. This repo intentionally does not include a scheduled sync workflow.
 
 By default, cluster JSON commands show locally closed clusters. Use `--hide-closed` when you only want active clusters. Thread list commands still hide locally closed issues/PRs unless `--include-closed` is passed.
 

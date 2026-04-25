@@ -62,6 +62,7 @@ import {
 } from '@ghcrawl/api-contract';
 
 import { buildClusters, buildRefinedClusters, buildSizeBoundedClusters } from './cluster/build.js';
+import { reconcileClusterCloseState } from './cluster/close-state.js';
 import { buildCodeSnapshotSignature } from './cluster/code-signature.js';
 import { buildDeterministicClusterGraphFromFingerprints } from './cluster/deterministic-engine.js';
 import { loadDeterministicClusterableThreadMeta } from './cluster/deterministic-thread-loader.js';
@@ -367,7 +368,7 @@ export class GHCrawlService {
       )
       .run(closedAt, closedAt, row.id);
     const clusterIds = getLatestRunClusterIdsForThread(this.db, repository.id, row.id);
-    const clusterClosed = this.reconcileClusterCloseState(repository.id, clusterIds) > 0;
+    const clusterClosed = reconcileClusterCloseState(this.db, repository.id, clusterIds) > 0;
     const updated = this.db.prepare('select * from threads where id = ? limit 1').get(row.id) as ThreadRow;
 
     return closeResponseSchema.parse({
@@ -1099,7 +1100,7 @@ export class GHCrawlService {
         : 0;
       const threadsClosed = threadsClosedFromClosedSweep + threadsClosedFromClosedBackfill + threadsClosedFromDirectReconcile;
       if (threadsClosed > 0) {
-        this.reconcileClusterCloseState(repoId);
+        reconcileClusterCloseState(this.db, repoId);
       }
       if (fingerprintThreadIds.length > 0) {
         const fingerprintItems = loadDeterministicClusterableThreadMeta(
@@ -3346,75 +3347,6 @@ export class GHCrawlService {
       repoFullName,
       onProgress,
     });
-  }
-
-  private reconcileClusterCloseState(repoId: number, clusterIds?: number[]): number {
-    const latestRun = getLatestClusterRun(this.db, repoId);
-    if (!latestRun) {
-      return 0;
-    }
-
-    const resolvedClusterIds =
-      clusterIds && clusterIds.length > 0
-        ? Array.from(new Set(clusterIds))
-        : (
-            this.db
-              .prepare('select id from clusters where repo_id = ? and cluster_run_id = ? order by id asc')
-              .all(repoId, latestRun.id) as Array<{ id: number }>
-          ).map((row) => row.id);
-    if (resolvedClusterIds.length === 0) {
-      return 0;
-    }
-
-    const summarize = this.db.prepare(
-      `select
-          c.id,
-          c.close_reason_local,
-          count(*) as member_count,
-          sum(case when t.state != 'open' or t.closed_at_local is not null then 1 else 0 end) as closed_member_count
-       from clusters c
-       join cluster_members cm on cm.cluster_id = c.id
-       join threads t on t.id = cm.thread_id
-       where c.id = ?
-       group by c.id, c.close_reason_local`,
-    );
-    const markClosed = this.db.prepare(
-      `update clusters
-       set closed_at_local = coalesce(closed_at_local, ?),
-           close_reason_local = 'all_members_closed'
-       where id = ?`,
-    );
-    const clearClosed = this.db.prepare(
-      `update clusters
-       set closed_at_local = null,
-           close_reason_local = null
-       where id = ? and close_reason_local = 'all_members_closed'`,
-    );
-
-    let changed = 0;
-    for (const clusterId of resolvedClusterIds) {
-      const row = summarize.get(clusterId) as
-        | {
-            id: number;
-            close_reason_local: string | null;
-            member_count: number;
-            closed_member_count: number;
-          }
-        | undefined;
-      if (!row || row.close_reason_local === 'manual') {
-        continue;
-      }
-      if (row.member_count > 0 && row.closed_member_count >= row.member_count) {
-        const closedAt = nowIso();
-        const result = markClosed.run(closedAt, clusterId);
-        changed += result.changes;
-        continue;
-      }
-      const cleared = clearClosed.run(clusterId);
-      changed += cleared.changes;
-    }
-
-    return changed;
   }
 
   private ensureDurableClusterForRunCluster(repoId: number, runClusterId: number, representativeThreadId: number | null): number {

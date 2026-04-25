@@ -112,6 +112,7 @@ import { blobStoreRoot, rawJsonStorage } from './db/raw-json-store.js';
 import { buildCanonicalDocument, isBotLikeAuthor } from './documents/normalize.js';
 import { buildDoctorResult } from './doctor.js';
 import { chunkEmbeddingTasks } from './embedding/chunks.js';
+import { loadClusterableActiveVectorMeta, loadClusterableThreadMeta, loadNormalizedActiveVectors } from './embedding/clusterable.js';
 import {
   countEmbeddingsForSourceKind,
   iterateStoredEmbeddings,
@@ -142,7 +143,7 @@ import {
   type PortableSyncValidationResponse,
 } from './portable/sync-store.js';
 import { finishServiceRun, listRunHistoryForRepository, startServiceRun } from './run-history.js';
-import { cosineSimilarity, dotProduct, normalizeEmbedding, rankNearestNeighbors, rankNearestNeighborsByScore } from './search/exact.js';
+import { cosineSimilarity, dotProduct, rankNearestNeighbors, rankNearestNeighborsByScore } from './search/exact.js';
 import { missingVectorStoreTarget, optimizeSqliteTarget } from './storage-maintenance.js';
 import { getSyncCursorState, writeSyncCursorState } from './sync/cursor.js';
 import { buildKeySummaryInputText, buildSummarySource } from './summary/source.js';
@@ -1698,7 +1699,7 @@ export class GHCrawlService {
       );
 
       const vectorStateCurrent = isRepoVectorStateCurrent(this.db, this.config, repository.id);
-      const vectorItems = this.loadClusterableActiveVectorMeta(repository.id, repository.fullName);
+      const vectorItems = loadClusterableActiveVectorMeta({ db: this.db, config: this.config, repoId: repository.id });
       if (vectorItems.length > 0) {
         const queryVectorItems = seedThreadIds ? vectorItems.filter((item) => seedThreadIds.includes(item.id)) : vectorItems;
         const activeSourceKind = activeVectorSourceKind(this.config.embeddingBasis);
@@ -1741,7 +1742,7 @@ export class GHCrawlService {
           }
         }
       } else if (!seedThreadIds && hasLegacyEmbeddings(this.db, this.config.embedModel, repository.id)) {
-        const legacy = this.loadClusterableThreadMeta(repository.id);
+        const legacy = loadClusterableThreadMeta({ db: this.db, repoId: repository.id });
         params.onProgress?.(
           `[cluster] loaded ${legacy.items.length} legacy embedded thread(s) across ${legacy.sourceKinds.length} source kind(s) for ${repository.fullName} k=${k} minScore=${minScore}`,
         );
@@ -1847,8 +1848,10 @@ export class GHCrawlService {
   }): ClusterExperimentResult {
     const backend = params.backend ?? 'vectorlite';
     const repository = this.requireRepository(params.owner, params.repo);
-    const loaded = this.loadClusterableThreadMeta(repository.id);
-    const activeVectors = isRepoVectorStateCurrent(this.db, this.config, repository.id) ? this.loadNormalizedActiveVectors(repository.id) : [];
+    const loaded = loadClusterableThreadMeta({ db: this.db, repoId: repository.id });
+    const activeVectors = isRepoVectorStateCurrent(this.db, this.config, repository.id)
+      ? loadNormalizedActiveVectors({ db: this.db, config: this.config, repoId: repository.id })
+      : [];
     const activeSourceKind = activeVectorSourceKind(this.config.embeddingBasis);
     const useActiveVectors = activeVectors.length > 0 && (params.sourceKinds === undefined || loaded.items.length === 0);
     const sourceKinds = useActiveVectors ? [activeSourceKind] : (params.sourceKinds ?? loaded.sourceKinds);
@@ -3308,7 +3311,7 @@ export class GHCrawlService {
       configDir: this.config.configDir,
       repoFullName,
       dimensions: ACTIVE_EMBED_DIMENSIONS,
-      vectors: this.loadClusterableActiveVectorMeta(repoId, repoFullName),
+      vectors: loadClusterableActiveVectorMeta({ db: this.db, config: this.config, repoId }),
     });
   }
 
@@ -4427,76 +4430,6 @@ export class GHCrawlService {
     throw new Error(`Unable to shrink embedding input for #${task.threadNumber}:${task.basis} below model limits`);
   }
 
-  private loadClusterableThreadMeta(repoId: number): {
-    items: Array<{ id: number; number: number; title: string }>;
-    sourceKinds: EmbeddingSourceKind[];
-  } {
-    const rows = this.db
-      .prepare(
-        `select t.id, t.number, t.title, e.source_kind
-         from threads t
-         join document_embeddings e on e.thread_id = t.id
-         where t.repo_id = ?
-           and t.state = 'open'
-           and t.closed_at_local is null
-           and not exists (
-             select 1
-             from cluster_closures cc
-             join cluster_memberships cm on cm.cluster_id = cc.cluster_id
-             where cm.thread_id = t.id
-               and cm.state <> 'removed_by_user'
-           )`,
-      )
-      .all(repoId) as Array<{ id: number; number: number; title: string; source_kind: EmbeddingSourceKind }>;
-
-    const itemsById = new Map<number, { id: number; number: number; title: string }>();
-    const sourceKinds = new Set<EmbeddingSourceKind>();
-    for (const row of rows) {
-      itemsById.set(row.id, { id: row.id, number: row.number, title: row.title });
-      sourceKinds.add(row.source_kind);
-    }
-
-    return {
-      items: Array.from(itemsById.values()),
-      sourceKinds: Array.from(sourceKinds.values()),
-    };
-  }
-
-  private loadClusterableActiveVectorMeta(repoId: number, _repoFullName: string): Array<{ id: number; number: number; title: string; embedding: number[] }> {
-    const rows = this.db
-      .prepare(
-        `select t.id, t.number, t.title, tv.vector_json
-         from threads t
-         join thread_vectors tv on tv.thread_id = t.id
-         where t.repo_id = ?
-           and t.state = 'open'
-           and t.closed_at_local is null
-           and not exists (
-             select 1
-             from cluster_closures cc
-             join cluster_memberships cm on cm.cluster_id = cc.cluster_id
-             where cm.thread_id = t.id
-               and cm.state <> 'removed_by_user'
-           )
-           and tv.model = ?
-           and tv.basis = ?
-           and tv.dimensions = ?
-         order by t.number asc`,
-      )
-      .all(repoId, this.config.embedModel, this.config.embeddingBasis, ACTIVE_EMBED_DIMENSIONS) as Array<{
-      id: number;
-      number: number;
-      title: string;
-      vector_json: Buffer | string;
-    }>;
-    return rows.map((row) => ({
-      id: row.id,
-      number: row.number,
-      title: row.title,
-      embedding: parseStoredVector(row.vector_json),
-    }));
-  }
-
   private loadDeterministicClusterableThreadMeta(repoId: number, threadIds?: number[]): Array<{
     id: number;
     number: number;
@@ -4773,15 +4706,6 @@ export class GHCrawlService {
       });
     }
     return fingerprints;
-  }
-
-  private loadNormalizedActiveVectors(repoId: number): Array<{ id: number; number: number; title: string; embedding: number[] }> {
-    return this.loadClusterableActiveVectorMeta(repoId, '').map((row) => ({
-      id: row.id,
-      number: row.number,
-      title: row.title,
-      embedding: normalizeEmbedding(row.embedding).normalized,
-    }));
   }
 
   private listStoredClusterNeighbors(repoId: number, threadId: number, limit: number): SearchHitDto['neighbors'] {

@@ -1,7 +1,6 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,6 +116,40 @@ import {
   type PortableSyncValidationResponse,
 } from './portable/sync-store.js';
 import { cosineSimilarity, dotProduct, normalizeEmbedding, rankNearestNeighbors, rankNearestNeighborsByScore } from './search/exact.js';
+import {
+  ACTIVE_EMBED_DIMENSIONS,
+  ACTIVE_EMBED_PIPELINE_VERSION,
+  CLUSTER_PARALLEL_MIN_EMBEDDINGS,
+  CLUSTER_PROGRESS_INTERVAL_MS,
+  DEFAULT_CLUSTER_MAX_SIZE,
+  DEFAULT_CLUSTER_MIN_SCORE,
+  DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE,
+  DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE,
+  DURABLE_CLUSTER_REUSE_MIN_OVERLAP,
+  EMBED_CONTEXT_RETRY_ATTEMPTS,
+  EMBED_CONTEXT_RETRY_FALLBACK_SHRINK_RATIO,
+  EMBED_CONTEXT_RETRY_TARGET_BUFFER_RATIO,
+  EMBED_ESTIMATED_CHARS_PER_TOKEN,
+  EMBED_MAX_BATCH_TOKENS,
+  EMBED_MAX_ITEM_TOKENS,
+  EMBED_TRUNCATION_MARKER,
+  KEY_SUMMARY_CONCURRENCY,
+  KEY_SUMMARY_MAX_BODY_CHARS,
+  KEY_SUMMARY_MAX_UNREAD,
+  MAX_DIRECT_RECONCILE_THREADS,
+  RAW_JSON_INLINE_THRESHOLD_BYTES,
+  requireFromHere,
+  STALE_CLOSED_BACKFILL_LIMIT,
+  STALE_CLOSED_SWEEP_LIMIT,
+  SUMMARY_MODEL_PRICING,
+  SUMMARY_PROMPT_VERSION,
+  SYNC_BATCH_DELAY_MS,
+  SYNC_BATCH_SIZE,
+  VECTORLITE_CLUSTER_EXPANDED_CANDIDATE_K,
+  VECTORLITE_CLUSTER_EXPANDED_EF_SEARCH,
+  VECTORLITE_CLUSTER_EXPANDED_K,
+  VECTORLITE_CLUSTER_EXPANDED_MULTIPLIER,
+} from './service-constants.js';
 import type {
   ActiveVectorRow,
   ActiveVectorTask,
@@ -138,7 +171,6 @@ import type {
   SimilaritySourceKind,
   SqliteMaintenanceStats,
   StoredEmbeddingRow,
-  SummaryModelPricing,
   SyncCursorState,
   SyncOptions,
   SyncRunStats,
@@ -179,50 +211,6 @@ import type { VectorNeighbor, VectorQueryParams, VectorStore } from './vector/st
 import { VectorliteStore } from './vector/vectorlite-store.js';
 
 export type { DoctorResult, TuiClusterDetail, TuiClusterMember, TuiClusterSortMode, TuiClusterSummary, TuiRefreshState, TuiRepoStats, TuiSnapshot, TuiThreadDetail } from './service-types.js';
-
-const SYNC_BATCH_SIZE = 100;
-const SYNC_BATCH_DELAY_MS = 5000;
-const STALE_CLOSED_SWEEP_LIMIT = 1000;
-const STALE_CLOSED_BACKFILL_LIMIT = 5000;
-const MAX_DIRECT_RECONCILE_THREADS = 500;
-const CLUSTER_PROGRESS_INTERVAL_MS = 5000;
-const DURABLE_CLUSTER_REUSE_MIN_OVERLAP = 0.8;
-const RAW_JSON_INLINE_THRESHOLD_BYTES = 4096;
-const CLUSTER_PARALLEL_MIN_EMBEDDINGS = 5000;
-const EMBED_ESTIMATED_CHARS_PER_TOKEN = 3;
-const EMBED_MAX_ITEM_TOKENS = 7000;
-const EMBED_MAX_BATCH_TOKENS = 250000;
-const requireFromHere = createRequire(import.meta.url);
-const EMBED_TRUNCATION_MARKER = '\n\n[truncated for embedding]';
-const EMBED_CONTEXT_RETRY_ATTEMPTS = 5;
-const EMBED_CONTEXT_RETRY_FALLBACK_SHRINK_RATIO = 0.9;
-const EMBED_CONTEXT_RETRY_TARGET_BUFFER_RATIO = 0.95;
-const KEY_SUMMARY_MAX_BODY_CHARS = 6000;
-const KEY_SUMMARY_CONCURRENCY = 24;
-const KEY_SUMMARY_MAX_UNREAD = 48;
-const SUMMARY_PROMPT_VERSION = 'v1';
-const ACTIVE_EMBED_DIMENSIONS = 1024;
-const ACTIVE_EMBED_PIPELINE_VERSION = 'vectorlite-1024-v1';
-const DEFAULT_CLUSTER_MIN_SCORE = 0.8;
-const DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE = 0.36;
-const DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE = 0.93;
-const DEFAULT_CLUSTER_MAX_SIZE = 40;
-const VECTORLITE_CLUSTER_EXPANDED_K = 24;
-const VECTORLITE_CLUSTER_EXPANDED_MULTIPLIER = 4;
-const VECTORLITE_CLUSTER_EXPANDED_CANDIDATE_K = 512;
-const VECTORLITE_CLUSTER_EXPANDED_EF_SEARCH = 1024;
-const SUMMARY_MODEL_PRICING: Record<string, SummaryModelPricing> = {
-  'gpt-5-mini': {
-    inputCostPerM: 0.25,
-    cachedInputCostPerM: 0.025,
-    outputCostPerM: 2.0,
-  },
-  'gpt-5.4-mini': {
-    inputCostPerM: 0.75,
-    cachedInputCostPerM: 0.075,
-    outputCostPerM: 4.5,
-  },
-};
 
 export class GHCrawlService {
   readonly config: GitcrawlConfig;

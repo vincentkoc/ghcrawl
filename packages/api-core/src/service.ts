@@ -5645,26 +5645,6 @@ export class GHCrawlService {
       title: string;
       body: string | null;
     }>;
-    const summaryTexts = this.loadDedupeSummaryTextMap(repoId, threadNumber);
-    const keySummaryTexts = this.loadKeySummaryTextMap(repoId, threadNumber);
-    const missingSummaryThreadNumbers: number[] = [];
-    const tasks = rows.flatMap((row) => {
-      const task = this.buildActiveVectorTask({
-        threadId: row.id,
-        threadNumber: row.number,
-        title: row.title,
-        body: row.body,
-        dedupeSummary: summaryTexts.get(row.id) ?? null,
-        keySummary: keySummaryTexts.get(row.id) ?? null,
-      });
-      if (task) {
-        return [task];
-      }
-      if (this.config.embeddingBasis === 'title_summary' || this.config.embeddingBasis === 'llm_key_summary') {
-        missingSummaryThreadNumbers.push(row.number);
-      }
-      return [];
-    });
     const pipelineCurrent = this.isRepoVectorStateCurrent(repoId);
     const existingRows = this.db
       .prepare(
@@ -5684,6 +5664,29 @@ export class GHCrawlService {
     for (const row of existingRows) {
       existing.set(String(row.thread_id), row.content_hash);
     }
+    const summaryTexts = this.loadDedupeSummaryTextMap(repoId, threadNumber);
+    const keySummaryTexts = this.loadKeySummaryTextMap(repoId, threadNumber);
+    const missingSummaryThreadNumbers: number[] = [];
+    const tasks = rows.flatMap((row) => {
+      const task = this.buildActiveVectorTask({
+        threadId: row.id,
+        threadNumber: row.number,
+        title: row.title,
+        body: row.body,
+        dedupeSummary: summaryTexts.get(row.id) ?? null,
+        keySummary: keySummaryTexts.get(row.id) ?? null,
+      });
+      if (task) {
+        return [task];
+      }
+      if (
+        (this.config.embeddingBasis === 'title_summary' || this.config.embeddingBasis === 'llm_key_summary') &&
+        (!pipelineCurrent || !existing.has(String(row.id)))
+      ) {
+        missingSummaryThreadNumbers.push(row.number);
+      }
+      return [];
+    });
     const pending = pipelineCurrent
       ? tasks.filter((task) => existing.get(String(task.threadId)) !== task.contentHash)
       : tasks;

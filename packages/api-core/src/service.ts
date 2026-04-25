@@ -210,6 +210,7 @@ import {
 } from './service-utils.js';
 import type { VectorNeighbor, VectorQueryParams, VectorStore } from './vector/store.js';
 import { getVectorliteClusterQuery, normalizedDistanceToScore, normalizedEmbeddingBuffer, parseStoredVector, vectorBlob } from './vector/encoding.js';
+import { isCorruptedVectorIndexError, repositoryVectorStorePath, vectorStoreSidecarPath } from './vector/repository-store.js';
 import { VectorliteStore } from './vector/vectorlite-store.js';
 
 export type { DoctorResult, TuiClusterDetail, TuiClusterMember, TuiClusterSortMode, TuiClusterSummary, TuiRefreshState, TuiRepoStats, TuiSnapshot, TuiThreadDetail } from './service-types.js';
@@ -2785,8 +2786,8 @@ export class GHCrawlService {
     ];
 
     if (repository) {
-      const storePath = this.repoVectorStorePath(repository.fullName);
-      const sidecarPath = this.vectorStoreSidecarPath(storePath);
+      const storePath = repositoryVectorStorePath(this.config.configDir, repository.fullName);
+      const sidecarPath = vectorStoreSidecarPath(storePath);
       if (existsSync(storePath)) {
         this.vectorStore.close();
         const vectorDb = openDb(storePath) as SqliteDatabase & { loadExtension: (extensionPath: string) => void };
@@ -3449,15 +3450,6 @@ export class GHCrawlService {
     };
   }
 
-  private repoVectorStorePath(repoFullName: string): string {
-    const safeName = repoFullName.replace(/[^a-zA-Z0-9._-]+/g, '__');
-    return path.join(this.config.configDir, 'vectors', `${safeName}.sqlite`);
-  }
-
-  private vectorStoreSidecarPath(storePath: string): string {
-    return path.join(path.dirname(storePath), `${path.basename(storePath, path.extname(storePath))}.hnsw`);
-  }
-
   private queryNearestWithRecovery(
     repoId: number,
     repoFullName: string,
@@ -3466,17 +3458,17 @@ export class GHCrawlService {
     try {
       return this.vectorStore.queryNearest({
         ...params,
-        storePath: this.repoVectorStorePath(repoFullName),
+        storePath: repositoryVectorStorePath(this.config.configDir, repoFullName),
         dimensions: ACTIVE_EMBED_DIMENSIONS,
       });
     } catch (error) {
-      if (!this.isCorruptedVectorIndexError(error)) {
+      if (!isCorruptedVectorIndexError(error)) {
         throw error;
       }
       this.rebuildRepositoryVectorStore(repoId, repoFullName);
       return this.vectorStore.queryNearest({
         ...params,
-        storePath: this.repoVectorStorePath(repoFullName),
+        storePath: repositoryVectorStorePath(this.config.configDir, repoFullName),
         dimensions: ACTIVE_EMBED_DIMENSIONS,
       });
     }
@@ -3484,22 +3476,17 @@ export class GHCrawlService {
 
   private rebuildRepositoryVectorStore(repoId: number, repoFullName: string): void {
     this.vectorStore.resetRepository({
-      storePath: this.repoVectorStorePath(repoFullName),
+      storePath: repositoryVectorStorePath(this.config.configDir, repoFullName),
       dimensions: ACTIVE_EMBED_DIMENSIONS,
     });
     for (const row of this.loadClusterableActiveVectorMeta(repoId, repoFullName)) {
       this.vectorStore.upsertVector({
-        storePath: this.repoVectorStorePath(repoFullName),
+        storePath: repositoryVectorStorePath(this.config.configDir, repoFullName),
         dimensions: ACTIVE_EMBED_DIMENSIONS,
         threadId: row.id,
         vector: row.embedding,
       });
     }
-  }
-
-  private isCorruptedVectorIndexError(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error);
-    return /Failed to load index from file|corrupted or unsupported/i.test(message);
   }
 
   private resetRepositoryVectors(repoId: number, repoFullName: string): void {
@@ -3510,7 +3497,7 @@ export class GHCrawlService {
       )
       .run(repoId);
     this.vectorStore.resetRepository({
-      storePath: this.repoVectorStorePath(repoFullName),
+      storePath: repositoryVectorStorePath(this.config.configDir, repoFullName),
       dimensions: ACTIVE_EMBED_DIMENSIONS,
     });
     writeRepoPipelineState(this.db, this.config, repoId, {
@@ -3540,12 +3527,12 @@ export class GHCrawlService {
         deleteVectorRow.run(row.thread_id);
         try {
           this.vectorStore.deleteVector({
-            storePath: this.repoVectorStorePath(repoFullName),
+            storePath: repositoryVectorStorePath(this.config.configDir, repoFullName),
             dimensions: ACTIVE_EMBED_DIMENSIONS,
             threadId: row.thread_id,
           });
         } catch (error) {
-          if (!this.isCorruptedVectorIndexError(error)) {
+          if (!isCorruptedVectorIndexError(error)) {
             throw error;
           }
           shouldRebuildVectorStore = true;
@@ -6395,13 +6382,13 @@ export class GHCrawlService {
       );
     try {
       this.vectorStore.upsertVector({
-        storePath: this.repoVectorStorePath(repoFullName),
+        storePath: repositoryVectorStorePath(this.config.configDir, repoFullName),
         dimensions: ACTIVE_EMBED_DIMENSIONS,
         threadId,
         vector: embedding,
       });
     } catch (error) {
-      if (!this.isCorruptedVectorIndexError(error)) {
+      if (!isCorruptedVectorIndexError(error)) {
         throw error;
       }
       this.rebuildRepositoryVectorStore(repoId, repoFullName);

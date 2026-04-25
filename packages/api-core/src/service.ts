@@ -99,6 +99,7 @@ import { migrate } from './db/migrate.js';
 import { checkpointWal, openDb, type SqliteDatabase } from './db/sqlite.js';
 import { readTextBlob, storeTextBlob } from './db/blob-store.js';
 import { buildCanonicalDocument, isBotLikeAuthor } from './documents/normalize.js';
+import { buildDoctorResult } from './doctor.js';
 import { makeGitHubClient, type GitHubClient } from './github/client.js';
 import { OpenAiProvider, type AiProvider } from './openai/provider.js';
 import {
@@ -256,38 +257,11 @@ export class GHCrawlService {
   }
 
   async doctor(): Promise<DoctorResult> {
-    const health = this.init();
-    const github = {
-      configured: Boolean(this.config.githubToken),
-      source: this.config.githubTokenSource,
-      tokenPresent: Boolean(this.config.githubToken),
-      error: null as string | null,
-    };
-    const openai = {
-      configured: Boolean(this.config.openaiApiKey),
-      source: this.config.openaiApiKeySource,
-      tokenPresent: Boolean(this.config.openaiApiKey),
-      error: null as string | null,
-    };
-    if (!github.configured) {
-      github.error = 'Set GITHUB_TOKEN to crawl GitHub data.';
-    }
-    if (!openai.configured) {
-      openai.error = 'Set OPENAI_API_KEY only for summary or embedding commands.';
-    }
-
-    const vectorliteHealth = this.vectorStore.checkRuntime();
-
-    return {
-      health,
-      github,
-      openai,
-      vectorlite: {
-        configured: this.config.vectorBackend === 'vectorlite',
-        runtimeOk: vectorliteHealth.ok,
-        error: vectorliteHealth.error,
-      },
-    };
+    return buildDoctorResult({
+      health: this.init(),
+      config: this.config,
+      vectorStore: this.vectorStore,
+    });
   }
 
   listRepositories(): RepositoriesResponse {

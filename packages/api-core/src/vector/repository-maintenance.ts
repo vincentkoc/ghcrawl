@@ -1,6 +1,8 @@
 import type { GitcrawlConfig } from '../config.js';
 import type { SqliteDatabase } from '../db/sqlite.js';
 import { writeRepoPipelineState } from '../pipeline-state.js';
+import { nowIso } from '../service-utils.js';
+import { vectorBlob } from './encoding.js';
 import { isCorruptedVectorIndexError, repositoryVectorStorePath } from './repository-store.js';
 import type { VectorNeighbor, VectorQueryParams, VectorStore } from './store.js';
 
@@ -129,4 +131,79 @@ export function pruneInactiveRepositoryVectors(params: {
     params.rebuild();
   }
   return rows.length;
+}
+
+export function cleanupMigratedRepositoryArtifacts(params: {
+  db: SqliteDatabase;
+  dbPath: string;
+  repoId: number;
+  repoFullName: string;
+  onProgress?: (message: string) => void;
+}): void {
+  const legacyEmbeddingCount = countLegacyEmbeddings(params.db, params.repoId);
+  const inlineJsonVectorCount = countInlineJsonThreadVectors(params.db, params.repoId);
+  if (legacyEmbeddingCount === 0 && inlineJsonVectorCount === 0) {
+    return;
+  }
+
+  if (legacyEmbeddingCount > 0) {
+    params.db
+      .prepare(
+        `delete from document_embeddings
+         where thread_id in (select id from threads where repo_id = ?)`,
+      )
+      .run(params.repoId);
+    params.onProgress?.(`[cleanup] removed ${legacyEmbeddingCount} legacy document embedding row(s) after vector migration`);
+  }
+
+  if (inlineJsonVectorCount > 0) {
+    const rows = params.db
+      .prepare(
+        `select tv.thread_id, tv.vector_json
+         from thread_vectors tv
+         join threads t on t.id = tv.thread_id
+         where t.repo_id = ?
+           and typeof(tv.vector_json) = 'text'
+           and tv.vector_json != ''`,
+      )
+      .all(params.repoId) as Array<{ thread_id: number; vector_json: string }>;
+    const update = params.db.prepare('update thread_vectors set vector_json = ?, updated_at = ? where thread_id = ?');
+    params.db.transaction(() => {
+      for (const row of rows) {
+        update.run(vectorBlob(JSON.parse(row.vector_json) as number[]), nowIso(), row.thread_id);
+      }
+    })();
+    params.onProgress?.(`[cleanup] compacted ${inlineJsonVectorCount} inline SQLite vector payload(s) from JSON to binary blobs`);
+  }
+
+  if (params.dbPath !== ':memory:') {
+    params.onProgress?.(`[cleanup] checkpointing WAL and vacuuming ${params.repoFullName} migration changes`);
+    params.db.pragma('wal_checkpoint(TRUNCATE)');
+    params.db.exec('VACUUM');
+    params.db.pragma('wal_checkpoint(TRUNCATE)');
+  }
+}
+
+function countLegacyEmbeddings(db: SqliteDatabase, repoId: number): number {
+  const row = db
+    .prepare(
+      `select count(*) as count
+       from document_embeddings
+       where thread_id in (select id from threads where repo_id = ?)`,
+    )
+    .get(repoId) as { count: number };
+  return row.count;
+}
+
+function countInlineJsonThreadVectors(db: SqliteDatabase, repoId: number): number {
+  const row = db
+    .prepare(
+      `select count(*) as count
+       from thread_vectors
+       where thread_id in (select id from threads where repo_id = ?)
+         and typeof(vector_json) = 'text'
+         and vector_json != ''`,
+    )
+    .get(repoId) as { count: number };
+  return row.count;
 }

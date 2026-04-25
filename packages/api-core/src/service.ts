@@ -211,6 +211,7 @@ import {
 import type { VectorNeighbor, VectorQueryParams, VectorStore } from './vector/store.js';
 import { getVectorliteClusterQuery, normalizedDistanceToScore, normalizedEmbeddingBuffer, parseStoredVector, vectorBlob } from './vector/encoding.js';
 import {
+  cleanupMigratedRepositoryArtifacts,
   pruneInactiveRepositoryVectors,
   queryNearestWithRecovery,
   rebuildRepositoryVectorStore,
@@ -3332,48 +3333,13 @@ export class GHCrawlService {
   }
 
   private cleanupMigratedRepositoryArtifacts(repoId: number, repoFullName: string, onProgress?: (message: string) => void): void {
-    const legacyEmbeddingCount = this.countLegacyEmbeddings(repoId);
-    const inlineJsonVectorCount = this.countInlineJsonThreadVectors(repoId);
-    if (legacyEmbeddingCount === 0 && inlineJsonVectorCount === 0) {
-      return;
-    }
-
-    if (legacyEmbeddingCount > 0) {
-      this.db
-        .prepare(
-          `delete from document_embeddings
-           where thread_id in (select id from threads where repo_id = ?)`,
-        )
-        .run(repoId);
-      onProgress?.(`[cleanup] removed ${legacyEmbeddingCount} legacy document embedding row(s) after vector migration`);
-    }
-
-    if (inlineJsonVectorCount > 0) {
-      const rows = this.db
-        .prepare(
-          `select tv.thread_id, tv.vector_json
-           from thread_vectors tv
-           join threads t on t.id = tv.thread_id
-           where t.repo_id = ?
-             and typeof(tv.vector_json) = 'text'
-             and tv.vector_json != ''`,
-        )
-        .all(repoId) as Array<{ thread_id: number; vector_json: string }>;
-      const update = this.db.prepare('update thread_vectors set vector_json = ?, updated_at = ? where thread_id = ?');
-      this.db.transaction(() => {
-        for (const row of rows) {
-          update.run(vectorBlob(JSON.parse(row.vector_json) as number[]), nowIso(), row.thread_id);
-        }
-      })();
-      onProgress?.(`[cleanup] compacted ${inlineJsonVectorCount} inline SQLite vector payload(s) from JSON to binary blobs`);
-    }
-
-    if (this.config.dbPath !== ':memory:') {
-      onProgress?.(`[cleanup] checkpointing WAL and vacuuming ${repoFullName} migration changes`);
-      this.db.pragma('wal_checkpoint(TRUNCATE)');
-      this.db.exec('VACUUM');
-      this.db.pragma('wal_checkpoint(TRUNCATE)');
-    }
+    cleanupMigratedRepositoryArtifacts({
+      db: this.db,
+      dbPath: this.config.dbPath,
+      repoId,
+      repoFullName,
+      onProgress,
+    });
   }
 
   private getLatestClusterRun(repoId: number): { id: number; finished_at: string | null } | null {
@@ -5887,30 +5853,6 @@ export class GHCrawlService {
       }
       this.rebuildRepositoryVectorStore(repoId, repoFullName);
     }
-  }
-
-  private countLegacyEmbeddings(repoId: number): number {
-    const row = this.db
-      .prepare(
-        `select count(*) as count
-         from document_embeddings
-         where thread_id in (select id from threads where repo_id = ?)`,
-      )
-      .get(repoId) as { count: number };
-    return row.count;
-  }
-
-  private countInlineJsonThreadVectors(repoId: number): number {
-    const row = this.db
-      .prepare(
-        `select count(*) as count
-         from thread_vectors
-         where thread_id in (select id from threads where repo_id = ?)
-           and typeof(vector_json) = 'text'
-           and vector_json != ''`,
-      )
-      .get(repoId) as { count: number };
-    return row.count;
   }
 
   private upsertEmbedding(threadId: number, sourceKind: EmbeddingSourceKind, contentHash: string, embedding: number[]): void {

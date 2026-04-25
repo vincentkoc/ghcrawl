@@ -89,7 +89,7 @@ export class OpenAiProvider implements AiProvider {
             verbosity: 'low',
           },
           reasoning: {
-            effort: 'minimal',
+            effort: 'low',
           },
           max_output_tokens: maxOutputTokens,
         });
@@ -151,7 +151,7 @@ export class OpenAiProvider implements AiProvider {
             verbosity: 'low',
           },
           reasoning: {
-            effort: 'minimal',
+            effort: 'low',
           },
           max_output_tokens: maxOutputTokens,
         });

@@ -1765,7 +1765,7 @@ export class GHCrawlService {
         sql += ' and number = ?';
         args.push(params.threadNumber);
       }
-      sql += ' order by number asc';
+      sql += ' order by datetime(coalesce(updated_at_gh, updated_at)) desc, number desc';
       if (params.limit) {
         sql += ' limit ?';
         args.push(params.limit);

@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { humanKeyForValue } from './cluster/human-key.js';
 import { openDb } from './db/sqlite.js';
+import { markRepoVectorsCurrent } from './pipeline-state.js';
 import { GHCrawlService } from './service.js';
 import type { VectorStore } from './vector/store.js';
 
@@ -3863,6 +3864,21 @@ test('tui snapshot returns mixed issue and pull request counts with default visi
     assert.equal(snapshot.stats.staleEmbedThreadCount, 5);
     assert.equal(snapshot.stats.staleEmbedSourceCount, 5);
     assert.equal(snapshot.stats.latestClusterRunId, 1);
+
+    const stalePipelineStats = service.getTuiSnapshot({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      embeddingStatsMode: 'pipeline',
+    });
+    assert.equal(stalePipelineStats.stats.staleEmbedThreadCount, 5);
+    markRepoVectorsCurrent(service.db, service.config, 1);
+    const currentPipelineStats = service.getTuiSnapshot({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      embeddingStatsMode: 'pipeline',
+    });
+    assert.equal(currentPipelineStats.stats.staleEmbedThreadCount, 0);
+
     assert.deepEqual(
       snapshot.clusters.map((cluster) => cluster.clusterId),
       [101, 100],

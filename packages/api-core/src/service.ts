@@ -22,7 +22,6 @@ import {
   neighborsResponseSchema,
   optimizeResponseSchema,
   refreshResponseSchema,
-  repositoriesResponseSchema,
   searchResponseSchema,
   syncResultSchema,
   type ActionRequest,
@@ -135,6 +134,7 @@ import {
   type PortableSyncValidationResponse,
 } from './portable/sync-store.js';
 import { finishServiceRun, listRunHistoryForRepository, startServiceRun } from './run-history.js';
+import { listStoredRepositories } from './repositories/list.js';
 import { cosineSimilarity, dotProduct, rankNearestNeighbors, rankNearestNeighborsByScore } from './search/exact.js';
 import { missingVectorStoreTarget, optimizeSqliteTarget } from './storage-maintenance.js';
 import { fetchThreadComments } from './sync/comments.js';
@@ -285,8 +285,7 @@ export class GHCrawlService {
   }
 
   listRepositories(): RepositoriesResponse {
-    const rows = this.db.prepare('select * from repositories order by full_name asc').all() as Array<Record<string, unknown>>;
-    return repositoriesResponseSchema.parse({ repositories: rows.map(repositoryToDto) });
+    return listStoredRepositories(this.db);
   }
 
   listRunHistory(params: { owner: string; repo: string; kind?: RunKind; limit?: number }): RunHistoryResponse {

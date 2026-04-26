@@ -28,6 +28,7 @@ import {
   type ClusterDetailResponse,
   type ClusterExplainResponse,
   type ClusterResultDto,
+  type ClusterSummaryDto,
   type ClusterSummariesResponse,
   type ClustersResponse,
   type DurableClustersResponse,
@@ -189,6 +190,7 @@ import type {
   SyncRunStats,
   ThreadRow,
   TuiClusterDetail,
+  TuiClusterSummary,
   TuiClusterSortMode,
   TuiRefreshState,
   TuiSnapshot,
@@ -221,6 +223,23 @@ import { VectorliteStore } from './vector/vectorlite-store.js';
 
 export type { DoctorResult, TuiClusterDetail, TuiClusterMember, TuiClusterSortMode, TuiClusterSummary, TuiRefreshState, TuiRepoStats, TuiSnapshot, TuiThreadDetail } from './service-types.js';
 export { parseRepoParams } from './api/params.js';
+
+function tuiClusterSummaryToDto(cluster: TuiClusterSummary): ClusterSummaryDto {
+  return {
+    clusterId: cluster.clusterId,
+    displayTitle: cluster.displayTitle,
+    isClosed: cluster.isClosed,
+    closedAtLocal: cluster.closedAtLocal,
+    closeReasonLocal: cluster.closeReasonLocal,
+    totalCount: cluster.totalCount,
+    issueCount: cluster.issueCount,
+    pullRequestCount: cluster.pullRequestCount,
+    latestUpdatedAt: cluster.latestUpdatedAt,
+    representativeThreadId: cluster.representativeThreadId,
+    representativeNumber: cluster.representativeNumber,
+    representativeKind: cluster.representativeKind,
+  };
+}
 
 export class GHCrawlService {
   readonly config: GitcrawlConfig;
@@ -2497,20 +2516,7 @@ export class GHCrawlService {
     return clusterSummariesResponseSchema.parse({
       repository: snapshot.repository,
       stats: snapshot.stats,
-      clusters: clusters.map((cluster) => ({
-        clusterId: cluster.clusterId,
-        displayTitle: cluster.displayTitle,
-        isClosed: cluster.isClosed,
-        closedAtLocal: cluster.closedAtLocal,
-        closeReasonLocal: cluster.closeReasonLocal,
-        totalCount: cluster.totalCount,
-        issueCount: cluster.issueCount,
-        pullRequestCount: cluster.pullRequestCount,
-        latestUpdatedAt: cluster.latestUpdatedAt,
-        representativeThreadId: cluster.representativeThreadId,
-        representativeNumber: cluster.representativeNumber,
-        representativeKind: cluster.representativeKind,
-      })),
+      clusters: clusters.map(tuiClusterSummaryToDto),
     });
   }
 
@@ -2559,20 +2565,7 @@ export class GHCrawlService {
     return clusterDetailResponseSchema.parse({
       repository: snapshot.repository,
       stats: snapshot.stats,
-      cluster: {
-        clusterId: cluster.clusterId,
-        displayTitle: cluster.displayTitle,
-        isClosed: cluster.isClosed,
-        closedAtLocal: cluster.closedAtLocal,
-        closeReasonLocal: cluster.closeReasonLocal,
-        totalCount: cluster.totalCount,
-        issueCount: cluster.issueCount,
-        pullRequestCount: cluster.pullRequestCount,
-        latestUpdatedAt: cluster.latestUpdatedAt,
-        representativeThreadId: cluster.representativeThreadId,
-        representativeNumber: cluster.representativeNumber,
-        representativeKind: cluster.representativeKind,
-      },
+      cluster: tuiClusterSummaryToDto(cluster),
       members,
     });
   }

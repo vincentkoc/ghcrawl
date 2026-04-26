@@ -364,6 +364,88 @@ test('exportPortableSync writes a compact sync database without bulky cache tabl
     assert.equal(driftStatus.drift.portableOnlyThreads, 0);
     assert.equal(driftStatus.drift.changedThreads, 1);
 
+    service.db
+      .prepare(
+        `insert into threads (
+          id, repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
+          labels_json, assignees_json, raw_json, content_hash, is_draft, created_at_gh, updated_at_gh,
+          closed_at_gh, merged_at_gh, first_pulled_at, last_pulled_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        11,
+        1,
+        '101',
+        43,
+        'issue',
+        'open',
+        'Live-only gateway crash',
+        'new live row',
+        'alice',
+        'User',
+        'https://github.com/openclaw/openclaw/issues/43',
+        '[]',
+        '[]',
+        '{}',
+        'live-only-hash',
+        0,
+        now,
+        now,
+        null,
+        null,
+        now,
+        now,
+        now,
+      );
+    const portableDriftDb = openDb(outputPath);
+    try {
+      portableDriftDb
+        .prepare(
+          `insert into threads (
+            id, repo_id, github_id, number, kind, state, title, body_excerpt, body_length, author_login, author_type,
+            html_url, labels_json, assignees_json, content_hash, is_draft, created_at_gh, updated_at_gh,
+            closed_at_gh, merged_at_gh, first_pulled_at, last_pulled_at, updated_at, closed_at_local, close_reason_local
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          12,
+          1,
+          '102',
+          44,
+          'issue',
+          'closed',
+          'Portable-only stale crash',
+          'old portable row',
+          16,
+          'bob',
+          'User',
+          'https://github.com/openclaw/openclaw/issues/44',
+          '[]',
+          '[]',
+          'portable-only-hash',
+          0,
+          now,
+          now,
+          now,
+          null,
+          now,
+          now,
+          now,
+          null,
+          null,
+        );
+    } finally {
+      portableDriftDb.close();
+    }
+    const divergentStatus = service.portableSyncStatus({
+      owner: 'openclaw',
+      repo: 'openclaw',
+      portablePath: outputPath,
+    });
+    assert.equal(divergentStatus.drift.liveOnlyThreads, 1);
+    assert.equal(divergentStatus.drift.portableOnlyThreads, 1);
+    assert.equal(divergentStatus.drift.changedThreads, 1);
+
     const portable = openDb(outputPath);
     try {
       const thread = portable.prepare('select body_excerpt, body_length from threads where number = 42').get() as {
@@ -415,7 +497,7 @@ test('exportPortableSync writes a compact sync database without bulky cache tabl
       const importResult = importService.importPortableSync(outputPath);
       assert.equal(importResult.ok, true);
       assert.equal(importResult.repository.fullName, 'openclaw/openclaw');
-      assert.equal(importResult.imported.threads, 1);
+      assert.equal(importResult.imported.threads, 2);
       assert.equal(importResult.imported.clusterGroups, 1);
       assert.equal(importResult.imported.clusterMemberships, 1);
       const importedThread = importService.db.prepare('select body, raw_json from threads where number = 42').get() as {
@@ -424,6 +506,14 @@ test('exportPortableSync writes a compact sync database without bulky cache tabl
       };
       assert.equal(importedThread.body.length, 64);
       assert.equal(importedThread.raw_json, '{}');
+      const importedPortableOnlyThread = importService.db.prepare('select state, body, raw_json from threads where number = 44').get() as {
+        state: string;
+        body: string;
+        raw_json: string;
+      };
+      assert.equal(importedPortableOnlyThread.state, 'closed');
+      assert.equal(importedPortableOnlyThread.body, 'old portable row');
+      assert.equal(importedPortableOnlyThread.raw_json, '{}');
     } finally {
       importService.close();
     }

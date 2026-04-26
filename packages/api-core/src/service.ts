@@ -147,7 +147,7 @@ import {
   listClosedDurableTuiClusters,
   listRawTuiClusters,
 } from './tui/cluster-queries.js';
-import { getTuiRepoStats, getTuiRepositoryRefreshState } from './tui/repo-stats.js';
+import { getTuiRepoStats, getTuiRepositoryRefreshState, type TuiEmbeddingStatsMode } from './tui/repo-stats.js';
 import {
   buildTuiThreadDetail,
 } from './tui/thread-detail.js';
@@ -2584,14 +2584,14 @@ export class GHCrawlService {
     sort?: TuiClusterSortMode;
     search?: string;
     includeClosedClusters?: boolean;
-    statsMode?: 'exact' | 'pipeline';
+    embeddingStatsMode?: TuiEmbeddingStatsMode;
   }): TuiSnapshot {
     const repository = this.requireRepository(params.owner, params.repo);
     const stats = getTuiRepoStats({
       db: this.db,
       config: this.config,
       repoId: repository.id,
-      embeddingStatsMode: params.statsMode,
+      embeddingStatsMode: params.embeddingStatsMode,
     });
     const latestRun = getLatestClusterRun(this.db, repository.id);
     const includeClosedClusters = params.includeClosedClusters ?? true;

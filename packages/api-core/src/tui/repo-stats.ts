@@ -5,7 +5,7 @@ import { getEmbeddingWorkset } from '../embedding/workset.js';
 import { isRepoVectorStateCurrent } from '../pipeline-state.js';
 import type { TuiRefreshState, TuiRepoStats } from '../service-types.js';
 
-type TuiEmbeddingStatsMode = 'exact' | 'pipeline';
+export type TuiEmbeddingStatsMode = 'exact' | 'pipeline';
 
 export function getTuiRepoStats(params: {
   db: SqliteDatabase;

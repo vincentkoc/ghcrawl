@@ -272,6 +272,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
       sort: sortMode,
       search,
       includeClosedClusters: showClosed,
+      statsMode: 'pipeline',
     });
     lastRefreshState = params.service.getTuiRefreshState({
       owner: currentRepository.owner,
@@ -291,6 +292,7 @@ export async function startTui(params: StartTuiParams): Promise<void> {
           sort: sortMode,
           search,
           includeClosedClusters: showClosed,
+          statsMode: 'pipeline',
         });
         rebuildClusterItems();
         selectedClusterId = preserveSelectedId(snapshot.clusters.map((cluster) => cluster.clusterId), null);

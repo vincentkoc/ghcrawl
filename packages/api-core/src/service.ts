@@ -2584,9 +2584,15 @@ export class GHCrawlService {
     sort?: TuiClusterSortMode;
     search?: string;
     includeClosedClusters?: boolean;
+    statsMode?: 'exact' | 'pipeline';
   }): TuiSnapshot {
     const repository = this.requireRepository(params.owner, params.repo);
-    const stats = getTuiRepoStats({ db: this.db, config: this.config, repoId: repository.id });
+    const stats = getTuiRepoStats({
+      db: this.db,
+      config: this.config,
+      repoId: repository.id,
+      embeddingStatsMode: params.statsMode,
+    });
     const latestRun = getLatestClusterRun(this.db, repository.id);
     const includeClosedClusters = params.includeClosedClusters ?? true;
     const minSize = params.minSize ?? 1;

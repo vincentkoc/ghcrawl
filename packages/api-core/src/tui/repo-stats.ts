@@ -2,9 +2,17 @@ import { getLatestClusterRun } from '../cluster/run-queries.js';
 import type { GitcrawlConfig } from '../config.js';
 import type { SqliteDatabase } from '../db/sqlite.js';
 import { getEmbeddingWorkset } from '../embedding/workset.js';
+import { isRepoVectorStateCurrent } from '../pipeline-state.js';
 import type { TuiRefreshState, TuiRepoStats } from '../service-types.js';
 
-export function getTuiRepoStats(params: { db: SqliteDatabase; config: GitcrawlConfig; repoId: number }): TuiRepoStats {
+type TuiEmbeddingStatsMode = 'exact' | 'pipeline';
+
+export function getTuiRepoStats(params: {
+  db: SqliteDatabase;
+  config: GitcrawlConfig;
+  repoId: number;
+  embeddingStatsMode?: TuiEmbeddingStatsMode;
+}): TuiRepoStats {
   const counts = params.db
     .prepare(
       `select kind, count(*) as count
@@ -22,17 +30,60 @@ export function getTuiRepoStats(params: { db: SqliteDatabase; config: GitcrawlCo
     (params.db
       .prepare("select finished_at from embedding_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
       .get(params.repoId) as { finished_at: string | null } | undefined) ?? null;
-  const embeddingWorkset = getEmbeddingWorkset({ db: params.db, config: params.config, repoId: params.repoId });
-  const staleThreadIds = new Set<number>(embeddingWorkset.pending.map((task) => task.threadId));
+  const embeddingStats =
+    params.embeddingStatsMode === 'pipeline'
+      ? getPipelineEmbeddingStats(params)
+      : getExactEmbeddingStats(params);
   return {
     openIssueCount: counts.find((row) => row.kind === 'issue')?.count ?? 0,
     openPullRequestCount: counts.find((row) => row.kind === 'pull_request')?.count ?? 0,
     lastGithubReconciliationAt: latestSync?.finished_at ?? null,
     lastEmbedRefreshAt: latestEmbed?.finished_at ?? null,
-    staleEmbedThreadCount: staleThreadIds.size,
-    staleEmbedSourceCount: embeddingWorkset.pending.length,
+    staleEmbedThreadCount: embeddingStats.staleThreadCount,
+    staleEmbedSourceCount: embeddingStats.staleSourceCount,
     latestClusterRunId: latestRun?.id ?? null,
     latestClusterRunFinishedAt: latestRun?.finished_at ?? null,
+  };
+}
+
+function getExactEmbeddingStats(params: { db: SqliteDatabase; config: GitcrawlConfig; repoId: number }): {
+  staleThreadCount: number;
+  staleSourceCount: number;
+} {
+  const embeddingWorkset = getEmbeddingWorkset({ db: params.db, config: params.config, repoId: params.repoId });
+  const staleThreadIds = new Set<number>(embeddingWorkset.pending.map((task) => task.threadId));
+  return {
+    staleThreadCount: staleThreadIds.size,
+    staleSourceCount: embeddingWorkset.pending.length,
+  };
+}
+
+function getPipelineEmbeddingStats(params: { db: SqliteDatabase; config: GitcrawlConfig; repoId: number }): {
+  staleThreadCount: number;
+  staleSourceCount: number;
+} {
+  if (isRepoVectorStateCurrent(params.db, params.config, params.repoId)) {
+    return { staleThreadCount: 0, staleSourceCount: 0 };
+  }
+  const row = params.db
+    .prepare(
+      `select count(*) as count
+       from threads t
+       where t.repo_id = ?
+         and t.state = 'open'
+         and t.closed_at_local is null
+         and not exists (
+           select 1
+           from cluster_closures cc
+           join cluster_memberships cm on cm.cluster_id = cc.cluster_id
+           where cm.thread_id = t.id
+             and cm.state <> 'removed_by_user'
+         )`,
+    )
+    .get(params.repoId) as { count: number };
+  return {
+    staleThreadCount: row.count,
+    staleSourceCount: row.count,
   };
 }
 

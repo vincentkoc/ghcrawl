@@ -105,6 +105,7 @@ import { migrate } from './db/migrate.js';
 import { checkpointWal, openDb, type SqliteDatabase } from './db/sqlite.js';
 import { replaceComments, refreshThreadDocument } from './documents/store.js';
 import { buildDoctorResult } from './doctor.js';
+import { embedBatchWithRecovery } from './embedding/batch-runner.js';
 import { chunkEmbeddingTasks } from './embedding/chunks.js';
 import { loadClusterableActiveVectorMeta, loadClusterableThreadMeta, loadNormalizedActiveVectors } from './embedding/clusterable.js';
 import {
@@ -113,7 +114,6 @@ import {
   loadNormalizedEmbeddingsForSourceKind,
   loadStoredEmbeddingsForThreadNumber,
 } from './embedding/queries.js';
-import { isEmbeddingContextError, parseEmbeddingContextError, shrinkEmbeddingTask } from './embedding/retry.js';
 import { activeVectorSourceKind } from './embedding/tasks.js';
 import { getEmbeddingWorkset } from './embedding/workset.js';
 import { makeGitHubClient, type GitHubClient } from './github/client.js';
@@ -170,7 +170,6 @@ import {
   DEFAULT_CROSS_KIND_CLUSTER_MIN_SCORE,
   DEFAULT_DETERMINISTIC_CLUSTER_MIN_SCORE,
   DURABLE_CLUSTER_REUSE_MIN_OVERLAP,
-  EMBED_CONTEXT_RETRY_ATTEMPTS,
   EMBED_MAX_BATCH_TOKENS,
   KEY_SUMMARY_CONCURRENCY,
   KEY_SUMMARY_MAX_BODY_CHARS,
@@ -1617,7 +1616,12 @@ export class GHCrawlService {
       const mapper = new IterableMapper(
         batches,
         async (batch: ActiveVectorTask[]) => {
-          return this.embedBatchWithRecovery(ai, batch, params.onProgress);
+          return embedBatchWithRecovery({
+            ai,
+            embedModel: this.config.embedModel,
+            batch,
+            onProgress: params.onProgress,
+          });
         },
         {
           concurrency: this.config.embedConcurrency,
@@ -3330,74 +3334,6 @@ export class GHCrawlService {
       throw new Error(`Repository ${fullName} not found. Run sync first.`);
     }
     return repositoryToDto(row);
-  }
-
-  private async embedBatchWithRecovery(
-    ai: AiProvider,
-    batch: ActiveVectorTask[],
-    onProgress?: (message: string) => void,
-  ): Promise<Array<{ task: ActiveVectorTask; embedding: number[] }>> {
-    try {
-      const embeddings = await ai.embedTexts({
-        model: this.config.embedModel,
-        texts: batch.map((task) => task.text),
-        dimensions: ACTIVE_EMBED_DIMENSIONS,
-      });
-      return batch.map((task, index) => ({ task, embedding: embeddings[index] }));
-    } catch (error) {
-      if (!isEmbeddingContextError(error) || batch.length === 1) {
-        if (batch.length === 1 && isEmbeddingContextError(error)) {
-          const recovered = await this.embedSingleTaskWithRecovery(ai, batch[0], onProgress);
-          return [recovered];
-        }
-        throw error;
-      }
-
-      onProgress?.(
-        `[embed] batch context error; isolating ${batch.length} item(s) to find oversized input(s)`,
-      );
-
-      const recovered: Array<{ task: ActiveVectorTask; embedding: number[] }> = [];
-      for (const task of batch) {
-        recovered.push(await this.embedSingleTaskWithRecovery(ai, task, onProgress));
-      }
-      return recovered;
-    }
-  }
-
-  private async embedSingleTaskWithRecovery(
-    ai: AiProvider,
-    task: ActiveVectorTask,
-    onProgress?: (message: string) => void,
-  ): Promise<{ task: ActiveVectorTask; embedding: number[] }> {
-    let current = task;
-
-    for (let attempt = 0; attempt < EMBED_CONTEXT_RETRY_ATTEMPTS; attempt += 1) {
-      try {
-        const [embedding] = await ai.embedTexts({
-          model: this.config.embedModel,
-          texts: [current.text],
-          dimensions: ACTIVE_EMBED_DIMENSIONS,
-        });
-        return { task: current, embedding };
-      } catch (error) {
-        const context = parseEmbeddingContextError(error);
-        if (!context) {
-          throw error;
-        }
-
-        const next = shrinkEmbeddingTask(current, { embedModel: this.config.embedModel, context });
-        if (!next || next.text === current.text) {
-          throw error;
-        }
-        onProgress?.(
-          `[embed] shortened #${current.threadNumber}:${current.basis} after context error est_tokens=${current.estimatedTokens}->${next.estimatedTokens}`,
-        );
-        current = next;
-      }
-    }
-
-    throw new Error(`Unable to shrink embedding input for #${task.threadNumber}:${task.basis} below model limits`);
   }
 
   private async aggregateRepositoryEdges(

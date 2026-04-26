@@ -1,6 +1,7 @@
 import { humanKeyForValue } from '../cluster/human-key.js';
 import type { SqliteDatabase } from '../db/sqlite.js';
-import type { DurableTuiClosure, TuiClusterSummary } from '../service-types.js';
+import type { DurableTuiClosure, TuiClusterDetail, TuiClusterSummary } from '../service-types.js';
+import { isEffectivelyClosed, parseArray } from '../service-utils.js';
 import {
   clusterDisplayTitle,
   collapseOverlappingClosedDurableRows,
@@ -285,6 +286,53 @@ export function getRawTuiClusterSummary(
   return rawTuiSummaryFromRow(repoId, row, durableClosure);
 }
 
+export function listTuiClusterMembers(
+  db: SqliteDatabase,
+  clusterId: number,
+  source: 'run_cluster' | 'durable_cluster',
+): TuiClusterDetail['members'] {
+  const rows =
+    source === 'run_cluster'
+      ? (db
+          .prepare(
+            `select t.id, t.number, t.kind, t.state, t.closed_at_local, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
+             from cluster_members cm
+             join threads t on t.id = cm.thread_id
+             where cm.cluster_id = ?
+             order by
+               case t.kind when 'issue' then 0 else 1 end asc,
+               coalesce(t.updated_at_gh, t.updated_at) desc,
+               t.number desc`,
+          )
+          .all(clusterId) as TuiClusterMemberRow[])
+      : (db
+          .prepare(
+            `select t.id, t.number, t.kind, t.state, t.closed_at_local, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
+             from cluster_memberships cm
+             join threads t on t.id = cm.thread_id
+             where cm.cluster_id = ?
+               and cm.state <> 'removed_by_user'
+             order by
+               case cm.role when 'canonical' then 0 else 1 end asc,
+               case t.kind when 'issue' then 0 else 1 end asc,
+               coalesce(t.updated_at_gh, t.updated_at) desc,
+               t.number desc`,
+          )
+          .all(clusterId) as TuiClusterMemberRow[]);
+
+  return rows.map((row) => ({
+    id: row.id,
+    number: row.number,
+    kind: row.kind,
+    isClosed: isEffectivelyClosed(row),
+    title: row.title,
+    updatedAtGh: row.updated_at_gh,
+    htmlUrl: row.html_url,
+    labels: parseArray(row.labels_json),
+    clusterScore: row.score_to_representative,
+  }));
+}
+
 type DurableTuiClusterSummaryRow = {
   cluster_id: number;
   stable_slug: string;
@@ -318,6 +366,19 @@ type RawTuiClusterSummaryRow = {
   pull_request_count: number;
   closed_member_count: number;
   search_text: string | null;
+};
+
+type TuiClusterMemberRow = {
+  id: number;
+  number: number;
+  kind: 'issue' | 'pull_request';
+  state: string;
+  closed_at_local: string | null;
+  title: string;
+  updated_at_gh: string | null;
+  html_url: string;
+  labels_json: string;
+  score_to_representative: number | null;
 };
 
 function rawTuiSummaryFromRow(repoId: number, row: RawTuiClusterSummaryRow, durableClosure: DurableTuiClosure | null): TuiClusterSummary {

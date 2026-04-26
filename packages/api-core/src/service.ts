@@ -148,6 +148,7 @@ import { compareTuiClusterSummary } from './tui/cluster-format.js';
 import {
   getDurableTuiClusterSummary,
   getRawTuiClusterSummary,
+  listTuiClusterMembers,
   listClosedDurableTuiClusters,
   listRawTuiClusters,
 } from './tui/cluster-queries.js';
@@ -3071,56 +3072,6 @@ export class GHCrawlService {
       throw new Error(`Cluster ${params.clusterId} was not found for ${repository.fullName}.`);
     }
 
-    const rows = summary
-      ? (this.db
-          .prepare(
-            `select t.id, t.number, t.kind, t.state, t.closed_at_local, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
-             from cluster_members cm
-             join threads t on t.id = cm.thread_id
-             where cm.cluster_id = ?
-             order by
-               case t.kind when 'issue' then 0 else 1 end asc,
-               coalesce(t.updated_at_gh, t.updated_at) desc,
-               t.number desc`,
-          )
-          .all(params.clusterId) as Array<{
-          id: number;
-          number: number;
-          kind: 'issue' | 'pull_request';
-          state: string;
-          closed_at_local: string | null;
-          title: string;
-          updated_at_gh: string | null;
-          html_url: string;
-          labels_json: string;
-          score_to_representative: number | null;
-        }>)
-      : (this.db
-          .prepare(
-            `select t.id, t.number, t.kind, t.state, t.closed_at_local, t.title, t.updated_at_gh, t.html_url, t.labels_json, cm.score_to_representative
-             from cluster_memberships cm
-             join threads t on t.id = cm.thread_id
-             where cm.cluster_id = ?
-               and cm.state <> 'removed_by_user'
-             order by
-               case cm.role when 'canonical' then 0 else 1 end asc,
-               case t.kind when 'issue' then 0 else 1 end asc,
-               coalesce(t.updated_at_gh, t.updated_at) desc,
-               t.number desc`,
-          )
-          .all(params.clusterId) as Array<{
-        id: number;
-        number: number;
-        kind: 'issue' | 'pull_request';
-        state: string;
-        closed_at_local: string | null;
-        title: string;
-        updated_at_gh: string | null;
-        html_url: string;
-        labels_json: string;
-        score_to_representative: number | null;
-      }>);
-
     return {
       clusterId: resolvedSummary.clusterId,
       displayTitle: resolvedSummary.displayTitle,
@@ -3134,17 +3085,7 @@ export class GHCrawlService {
       representativeThreadId: resolvedSummary.representativeThreadId,
       representativeNumber: resolvedSummary.representativeNumber,
       representativeKind: resolvedSummary.representativeKind,
-      members: rows.map((row) => ({
-        id: row.id,
-        number: row.number,
-        kind: row.kind,
-        isClosed: isEffectivelyClosed(row),
-        title: row.title,
-        updatedAtGh: row.updated_at_gh,
-        htmlUrl: row.html_url,
-        labels: parseArray(row.labels_json),
-        clusterScore: row.score_to_representative,
-      })),
+      members: listTuiClusterMembers(this.db, params.clusterId, summary ? 'run_cluster' : 'durable_cluster'),
     };
   }
 

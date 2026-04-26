@@ -96,7 +96,7 @@ For agent-facing and script-facing commands, prefer explicit machine mode:
 ghcrawl configure --json
 ghcrawl doctor --json
 ghcrawl threads owner/repo --numbers 42,43,44 --json
-ghcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent --json
+ghcrawl clusters owner/repo --min-size 5 --limit 20 --sort recent --json
 ```
 
 Contract notes:
@@ -208,8 +208,8 @@ ghcrawl threads owner/repo --numbers 42,43,44 --json
 ghcrawl threads owner/repo --numbers 42,43,44 --include-closed --json
 ghcrawl close-thread owner/repo --number 42 --json
 ghcrawl close-cluster owner/repo --id 123 --json
-ghcrawl clusters owner/repo --min-size 10 --limit 20 --json
-ghcrawl clusters owner/repo --min-size 10 --limit 20 --include-closed --json
+ghcrawl clusters owner/repo --min-size 5 --limit 20 --json
+ghcrawl clusters owner/repo --min-size 5 --limit 20 --include-closed --json
 ghcrawl durable-clusters owner/repo --member-limit 10 --json
 ghcrawl cluster-detail owner/repo --id 123 --json
 ghcrawl cluster-detail owner/repo --id 123 --include-closed --json
@@ -286,7 +286,7 @@ ghcrawl doctor --json
 ghcrawl refresh owner/repo
 ghcrawl runs owner/repo --limit 20 --json
 ghcrawl threads owner/repo --numbers 42,43,44 --json
-ghcrawl clusters owner/repo --min-size 10 --limit 20 --sort recent --json
+ghcrawl clusters owner/repo --min-size 5 --limit 20 --sort recent --json
 ghcrawl cluster-detail owner/repo --id 123 --member-limit 20 --body-chars 280 --json
 ghcrawl cluster-explain owner/repo --id 123 --member-limit 20 --event-limit 50 --json
 ```

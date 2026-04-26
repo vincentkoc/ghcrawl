@@ -32,6 +32,10 @@ test('cycleMinSizeFilter rotates through presets', () => {
   assert.equal(cycleMinSizeFilter(2), 5);
 });
 
+test('cycleMinSizeFilter falls back to the default 5+ view', () => {
+  assert.equal(cycleMinSizeFilter(99 as never), 5);
+});
+
 test('cycleMemberSortMode rotates through member sort modes', () => {
   assert.equal(cycleMemberSortMode('kind'), 'recent');
   assert.equal(cycleMemberSortMode('recent'), 'number');

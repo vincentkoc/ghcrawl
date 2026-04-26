@@ -27,7 +27,7 @@ export function cycleSortMode(current: TuiClusterSortMode): TuiClusterSortMode {
 
 export function cycleMinSizeFilter(current: TuiMinSizeFilter): TuiMinSizeFilter {
   const index = MIN_SIZE_FILTER_ORDER.indexOf(current);
-  return MIN_SIZE_FILTER_ORDER[(index + 1) % MIN_SIZE_FILTER_ORDER.length] ?? 10;
+  return MIN_SIZE_FILTER_ORDER[(index + 1) % MIN_SIZE_FILTER_ORDER.length] ?? 5;
 }
 
 export function cycleMemberSortMode(current: TuiMemberSortMode): TuiMemberSortMode {

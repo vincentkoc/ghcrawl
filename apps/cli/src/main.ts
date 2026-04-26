@@ -378,7 +378,7 @@ const COMMAND_SPECS: readonly CommandSpec[] = [
       '--hide-closed  Hide locally closed clusters',
       '--json  Emit machine-readable JSON output explicitly',
     ],
-    examples: ['ghcrawl clusters openclaw/openclaw --min-size 10 --limit 20 --sort recent --json'],
+    examples: ['ghcrawl clusters openclaw/openclaw --min-size 5 --limit 20 --sort recent --json'],
     agentJson: true,
   },
   {

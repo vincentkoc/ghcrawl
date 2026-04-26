@@ -106,7 +106,7 @@ import {
 import { migrate } from './db/migrate.js';
 import { checkpointWal, openDb, type SqliteDatabase } from './db/sqlite.js';
 import { blobStoreRoot, rawJsonStorage } from './db/raw-json-store.js';
-import { buildCanonicalDocument, isBotLikeAuthor } from './documents/normalize.js';
+import { buildCanonicalDocument } from './documents/normalize.js';
 import { buildDoctorResult } from './doctor.js';
 import { chunkEmbeddingTasks } from './embedding/chunks.js';
 import { loadClusterableActiveVectorMeta, loadClusterableThreadMeta, loadNormalizedActiveVectors } from './embedding/clusterable.js';
@@ -142,6 +142,7 @@ import {
 import { finishServiceRun, listRunHistoryForRepository, startServiceRun } from './run-history.js';
 import { cosineSimilarity, dotProduct, rankNearestNeighbors, rankNearestNeighborsByScore } from './search/exact.js';
 import { missingVectorStoreTarget, optimizeSqliteTarget } from './storage-maintenance.js';
+import { fetchThreadComments } from './sync/comments.js';
 import { getSyncCursorState, writeSyncCursorState } from './sync/cursor.js';
 import { buildKeySummaryInputText, buildSummarySource } from './summary/source.js';
 import { compareTuiClusterSummary } from './tui/cluster-format.js';
@@ -1041,7 +1042,14 @@ export class GHCrawlService {
             codeFilesSynced += files.length;
           }
           if (includeComments && !threadIsClosed) {
-            const comments = await this.fetchThreadComments(params.owner, params.repo, number, isPr, reporter);
+            const comments = await fetchThreadComments({
+              github,
+              owner: params.owner,
+              repo: params.repo,
+              number,
+              isPr,
+              reporter,
+            });
             this.replaceComments(threadId, comments);
             commentsSynced += comments.length;
           }
@@ -3284,78 +3292,6 @@ export class GHCrawlService {
     }
 
     return durableClusterId;
-  }
-
-  private async fetchThreadComments(
-    owner: string,
-    repo: string,
-    number: number,
-    isPr: boolean,
-    reporter?: (message: string) => void,
-  ): Promise<CommentSeed[]> {
-    const github = this.requireGithub();
-    const comments: CommentSeed[] = [];
-
-    const issueComments = await github.listIssueComments(owner, repo, number, reporter);
-    comments.push(
-      ...issueComments.map((comment) => {
-        const authorLogin = userLogin(comment);
-        const authorType = userType(comment);
-        return {
-          githubId: String(comment.id),
-          commentType: 'issue_comment',
-          authorLogin,
-          authorType,
-          body: String(comment.body ?? ''),
-          isBot: isBotLikeAuthor({ authorLogin, authorType }),
-          rawJson: asJson(comment),
-          createdAtGh: typeof comment.created_at === 'string' ? comment.created_at : null,
-          updatedAtGh: typeof comment.updated_at === 'string' ? comment.updated_at : null,
-        };
-      }),
-    );
-
-    if (isPr) {
-      const reviews = await github.listPullReviews(owner, repo, number, reporter);
-      comments.push(
-        ...reviews.map((review) => {
-          const authorLogin = userLogin(review);
-          const authorType = userType(review);
-          return {
-            githubId: String(review.id),
-            commentType: 'review',
-            authorLogin,
-            authorType,
-            body: String(review.body ?? review.state ?? ''),
-            isBot: isBotLikeAuthor({ authorLogin, authorType }),
-            rawJson: asJson(review),
-            createdAtGh: typeof review.submitted_at === 'string' ? review.submitted_at : null,
-            updatedAtGh: typeof review.submitted_at === 'string' ? review.submitted_at : null,
-          };
-        }),
-      );
-
-      const reviewComments = await github.listPullReviewComments(owner, repo, number, reporter);
-      comments.push(
-        ...reviewComments.map((comment) => {
-          const authorLogin = userLogin(comment);
-          const authorType = userType(comment);
-          return {
-            githubId: String(comment.id),
-            commentType: 'review_comment',
-            authorLogin,
-            authorType,
-            body: String(comment.body ?? ''),
-            isBot: isBotLikeAuthor({ authorLogin, authorType }),
-            rawJson: asJson(comment),
-            createdAtGh: typeof comment.created_at === 'string' ? comment.created_at : null,
-            updatedAtGh: typeof comment.updated_at === 'string' ? comment.updated_at : null,
-          };
-        }),
-      );
-    }
-
-    return comments;
   }
 
   private requireAi(): AiProvider {

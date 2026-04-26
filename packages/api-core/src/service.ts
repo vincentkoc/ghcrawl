@@ -63,7 +63,6 @@ import {
 
 import { buildClusters, buildRefinedClusters, buildSizeBoundedClusters } from './cluster/build.js';
 import { reconcileClusterCloseState } from './cluster/close-state.js';
-import { buildCodeSnapshotSignature } from './cluster/code-signature.js';
 import { buildDeterministicClusterGraphFromFingerprints } from './cluster/deterministic-engine.js';
 import { loadDeterministicClusterableThreadMeta } from './cluster/deterministic-thread-loader.js';
 import {
@@ -91,7 +90,6 @@ import {
   upsertClusterMembership,
   upsertSimilarityEdgeEvidence,
   upsertThreadRevision,
-  upsertThreadCodeSnapshot,
   upsertThreadKeySummary,
 } from './cluster/persistent-store.js';
 import {
@@ -105,7 +103,7 @@ import {
 } from './config.js';
 import { migrate } from './db/migrate.js';
 import { checkpointWal, openDb, type SqliteDatabase } from './db/sqlite.js';
-import { blobStoreRoot, rawJsonStorage } from './db/raw-json-store.js';
+import { rawJsonStorage } from './db/raw-json-store.js';
 import { buildCanonicalDocument } from './documents/normalize.js';
 import { buildDoctorResult } from './doctor.js';
 import { chunkEmbeddingTasks } from './embedding/chunks.js';
@@ -144,6 +142,7 @@ import { cosineSimilarity, dotProduct, rankNearestNeighbors, rankNearestNeighbor
 import { missingVectorStoreTarget, optimizeSqliteTarget } from './storage-maintenance.js';
 import { fetchThreadComments } from './sync/comments.js';
 import { getSyncCursorState, writeSyncCursorState } from './sync/cursor.js';
+import { persistThreadCodeSnapshot, upsertRepository, upsertThread } from './sync/persistence.js';
 import { buildKeySummaryInputText, buildSummarySource } from './summary/source.js';
 import { compareTuiClusterSummary } from './tui/cluster-format.js';
 import {
@@ -216,16 +215,12 @@ import {
   isPullRequestPayload,
   nowIso,
   parseArray,
-  parseAssignees,
   parseIso,
-  parseLabels,
   parseObjectJson,
   repositoryToDto,
   snippetText,
   stableContentHash,
   threadToDto,
-  userLogin,
-  userType,
 } from './service-utils.js';
 import type { VectorNeighbor, VectorQueryParams, VectorStore } from './vector/store.js';
 import { getVectorliteClusterQuery, normalizedDistanceToScore, normalizedEmbeddingBuffer, parseStoredVector, vectorBlob } from './vector/encoding.js';
@@ -974,7 +969,12 @@ export class GHCrawlService {
     params.onProgress?.(`[sync] fetching repository metadata for ${params.owner}/${params.repo}`);
     const reporter = params.onProgress ? (message: string) => params.onProgress?.(message.replace(/^\[github\]/, '[sync/github]')) : undefined;
     const repoData = await github.getRepo(params.owner, params.repo, reporter);
-    const repoId = this.upsertRepository(params.owner, params.repo, repoData);
+    const repoId = upsertRepository({
+      db: this.db,
+      owner: params.owner,
+      repo: params.repo,
+      payload: repoData,
+    });
     const runId = startServiceRun(this.db, 'sync_runs', repoId, `${params.owner}/${params.repo}`);
     const syncCursor = getSyncCursorState(this.db, repoId);
     const overlapReferenceAt = syncCursor.lastOverlappingOpenScanCompletedAt ?? syncCursor.lastFullOpenScanStartedAt;
@@ -1030,7 +1030,13 @@ export class GHCrawlService {
           const shouldFetchPullPayload = isPr && includeCode && !itemIsClosed;
           const threadPayload = shouldFetchPullPayload ? await github.getPull(params.owner, params.repo, number, reporter) : item;
           const threadIsClosed = isClosedGitHubPayload(threadPayload);
-          const threadId = this.upsertThread(repoId, kind, threadPayload, crawlStartedAt);
+          const threadId = upsertThread({
+            db: this.db,
+            repoId,
+            kind,
+            payload: threadPayload,
+            pulledAt: crawlStartedAt,
+          });
           if (threadIsClosed && (includeComments || includeCode)) {
             params.onProgress?.(
               `[sync] ${kind} #${number} is closed; metadata-only update, skipping comment/code hydration and fingerprint refresh`,
@@ -1038,7 +1044,13 @@ export class GHCrawlService {
           }
           if (includeCode && isPr && !threadIsClosed) {
             const files = await github.listPullFiles(params.owner, params.repo, number, reporter);
-            this.persistThreadCodeSnapshot(threadId, threadPayload, files);
+            persistThreadCodeSnapshot({
+              db: this.db,
+              dbPath: this.config.dbPath,
+              threadId,
+              threadPayload,
+              files,
+            });
             codeFilesSynced += files.length;
           }
           if (includeComments && !threadIsClosed) {
@@ -3315,112 +3327,6 @@ export class GHCrawlService {
       throw new Error(`Repository ${fullName} not found. Run sync first.`);
     }
     return repositoryToDto(row);
-  }
-
-  private upsertRepository(owner: string, repo: string, payload: Record<string, unknown>): number {
-    const fullName = `${owner}/${repo}`;
-    this.db
-      .prepare(
-        `insert into repositories (owner, name, full_name, github_repo_id, raw_json, updated_at)
-         values (?, ?, ?, ?, ?, ?)
-         on conflict(full_name) do update set
-           github_repo_id = excluded.github_repo_id,
-           raw_json = excluded.raw_json,
-           updated_at = excluded.updated_at`,
-      )
-      .run(owner, repo, fullName, payload.id ? String(payload.id) : null, asJson(payload), nowIso());
-    const row = this.db.prepare('select id from repositories where full_name = ?').get(fullName) as { id: number };
-    return row.id;
-  }
-
-  private upsertThread(
-    repoId: number,
-    kind: 'issue' | 'pull_request',
-    payload: Record<string, unknown>,
-    pulledAt: string,
-  ): number {
-    const title = String(payload.title ?? `#${payload.number}`);
-    const body = typeof payload.body === 'string' ? payload.body : null;
-    const labels = parseLabels(payload);
-    const assignees = parseAssignees(payload);
-    const contentHash = stableContentHash(`${title}\n${body ?? ''}`);
-    this.db
-      .prepare(
-        `insert into threads (
-            repo_id, github_id, number, kind, state, title, body, author_login, author_type, html_url,
-            labels_json, assignees_json, raw_json, content_hash, is_draft,
-            created_at_gh, updated_at_gh, closed_at_gh, merged_at_gh, first_pulled_at, last_pulled_at, updated_at
-          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          on conflict(repo_id, kind, number) do update set
-            github_id = excluded.github_id,
-            state = excluded.state,
-            title = excluded.title,
-            body = excluded.body,
-            author_login = excluded.author_login,
-            author_type = excluded.author_type,
-            html_url = excluded.html_url,
-            labels_json = excluded.labels_json,
-            assignees_json = excluded.assignees_json,
-            raw_json = excluded.raw_json,
-            content_hash = excluded.content_hash,
-            is_draft = excluded.is_draft,
-            created_at_gh = excluded.created_at_gh,
-            updated_at_gh = excluded.updated_at_gh,
-            closed_at_gh = excluded.closed_at_gh,
-            merged_at_gh = excluded.merged_at_gh,
-            last_pulled_at = excluded.last_pulled_at,
-            updated_at = excluded.updated_at`,
-      )
-      .run(
-        repoId,
-        String(payload.id),
-        Number(payload.number),
-        kind,
-        String(payload.state ?? 'open'),
-        title,
-        body,
-        userLogin(payload),
-        userType(payload),
-        String(payload.html_url),
-        asJson(labels),
-        asJson(assignees),
-        asJson(payload),
-        contentHash,
-        payload.draft ? 1 : 0,
-        typeof payload.created_at === 'string' ? payload.created_at : null,
-        typeof payload.updated_at === 'string' ? payload.updated_at : null,
-        typeof payload.closed_at === 'string' ? payload.closed_at : null,
-        typeof payload.merged_at === 'string' ? payload.merged_at : null,
-        pulledAt,
-        pulledAt,
-        nowIso(),
-      );
-    const row = this.db
-      .prepare('select id from threads where repo_id = ? and kind = ? and number = ?')
-      .get(repoId, kind, Number(payload.number)) as { id: number };
-    return row.id;
-  }
-
-  private persistThreadCodeSnapshot(threadId: number, threadPayload: Record<string, unknown>, files: Array<Record<string, unknown>>): void {
-    const title = String(threadPayload.title ?? `#${threadPayload.number}`);
-    const body = typeof threadPayload.body === 'string' ? threadPayload.body : null;
-    const revisionId = upsertThreadRevision(this.db, {
-      threadId,
-      sourceUpdatedAt: typeof threadPayload.updated_at === 'string' ? threadPayload.updated_at : null,
-      title,
-      body,
-      labels: parseLabels(threadPayload),
-      rawJson: asJson(threadPayload),
-    });
-    const base = threadPayload.base as Record<string, unknown> | undefined;
-    const head = threadPayload.head as Record<string, unknown> | undefined;
-    upsertThreadCodeSnapshot(this.db, {
-      threadRevisionId: revisionId,
-      baseSha: typeof base?.sha === 'string' ? base.sha : null,
-      headSha: typeof head?.sha === 'string' ? head.sha : null,
-      signature: buildCodeSnapshotSignature(files),
-      storeRoot: blobStoreRoot(this.config.dbPath),
-    });
   }
 
   private async applyClosedOverlapSweep(params: {

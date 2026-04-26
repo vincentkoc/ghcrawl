@@ -151,7 +151,7 @@ import {
   listClosedDurableTuiClusters,
   listRawTuiClusters,
 } from './tui/cluster-queries.js';
-import { getTuiRepoStats } from './tui/repo-stats.js';
+import { getTuiRepoStats, getTuiRepositoryRefreshState } from './tui/repo-stats.js';
 import { getLatestTuiKeySummary, getTopChangedFiles, getTuiThreadSummaries } from './tui/thread-detail.js';
 import {
   ACTIVE_EMBED_DIMENSIONS,
@@ -3055,56 +3055,7 @@ export class GHCrawlService {
 
   getTuiRefreshState(params: { owner: string; repo: string }): TuiRefreshState {
     const repository = this.requireRepository(params.owner, params.repo);
-    const threadState = this.db
-      .prepare(
-        `select
-           max(updated_at) as thread_updated_at,
-           max(closed_at_local) as thread_closed_at
-         from threads
-         where repo_id = ?`,
-      )
-      .get(repository.id) as { thread_updated_at: string | null; thread_closed_at: string | null };
-    const clusterState = this.db
-      .prepare(
-        `select max(closed_at_local) as cluster_closed_at
-         from clusters
-         where repo_id = ?`,
-      )
-      .get(repository.id) as { cluster_closed_at: string | null };
-    const durableClusterState = this.db
-      .prepare(
-        `select max(updated_at) as durable_cluster_updated_at
-         from cluster_groups
-         where repo_id = ?`,
-      )
-      .get(repository.id) as { durable_cluster_updated_at: string | null };
-    const durableMembershipState = this.db
-      .prepare(
-        `select max(cm.updated_at) as durable_membership_updated_at
-         from cluster_memberships cm
-         join cluster_groups cg on cg.id = cm.cluster_id
-         where cg.repo_id = ?`,
-      )
-      .get(repository.id) as { durable_membership_updated_at: string | null };
-    const latestSync = this.db
-      .prepare("select id from sync_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
-      .get(repository.id) as { id: number } | undefined;
-    const latestEmbedding = this.db
-      .prepare("select id from embedding_runs where repo_id = ? and status = 'completed' order by id desc limit 1")
-      .get(repository.id) as { id: number } | undefined;
-    const latestClusterRun = getLatestClusterRun(this.db, repository.id);
-
-    return {
-      repositoryUpdatedAt: repository.updatedAt,
-      threadUpdatedAt: threadState.thread_updated_at,
-      threadClosedAt: threadState.thread_closed_at,
-      clusterClosedAt: clusterState.cluster_closed_at,
-      durableClusterUpdatedAt: durableClusterState.durable_cluster_updated_at,
-      durableMembershipUpdatedAt: durableMembershipState.durable_membership_updated_at,
-      latestSyncRunId: latestSync?.id ?? null,
-      latestEmbeddingRunId: latestEmbedding?.id ?? null,
-      latestClusterRunId: latestClusterRun?.id ?? null,
-    };
+    return getTuiRepositoryRefreshState({ db: this.db, repository });
   }
 
   getTuiClusterDetail(params: { owner: string; repo: string; clusterId: number; clusterRunId?: number }): TuiClusterDetail {
